@@ -15,9 +15,7 @@ library(tidyr)
 library(xlsx)
 library(readxl)
 
-setwd("/Users/ebbamark/Desktop/EU Road Emissions Work/Datasets/")
-
-ongrid <- read_xlsx("IRENA_ELEC_GEN/ELECGEN_IRENA_ONGRID.xlsx", range = cell_rows(2:79922)) %>%
+ongrid <- read_xlsx("ELECGEN_IRENA_ONGRID.xlsx", range = cell_rows(2:79922)) %>%
   mutate(country = ifelse(country=="Slovakia", "Slovak Republic", country), gwh = as.numeric(gwh)) %>%
   fill(country, technology, on_off) %>%
   pivot_wider(id_cols = c(country, year), names_from = technology, values_from = gwh) %>%
@@ -25,7 +23,7 @@ ongrid <- read_xlsx("IRENA_ELEC_GEN/ELECGEN_IRENA_ONGRID.xlsx", range = cell_row
 
 ongrid$total_gwh <- rowSums(as.matrix(ongrid[,3:20]), na.rm = TRUE)
 
-offgrid <- read_xlsx("IRENA_ELEC_GEN/ELECGEN_IRENA_OFFGRID.xlsx", range = cell_rows(2:79922)) %>%
+offgrid <- read_xlsx("ELECGEN_IRENA_OFFGRID.xlsx", range = cell_rows(2:79922)) %>%
   mutate(country = ifelse(country=="Slovakia", "Slovak Republic", country), gwh = as.numeric(gwh)) %>%
   fill(country, technology, on_off) %>%
   pivot_wider(id_cols = c(country, year), names_from = technology, values_from = gwh) %>% 
