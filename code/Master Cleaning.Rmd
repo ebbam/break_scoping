@@ -1,0 +1,225 @@
+---
+title: "Cleaning_all"
+author: "Ebba Mark"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(data.table)
+library(here)
+library(tidyverse)
+library(readxl)
+library(openxlsx)
+library(stringr)
+library(gets)
+library(getspanel)
+library(janitor)
+library(superheat)
+library(skimr)
+
+```
+
+```{r}
+EU15 <- c("Austria", "Belgium", "Germany", "Denmark", "Spain", "Finland",
+          "France", "United Kingdom", "Ireland", "Italy", "Luxembourg", 
+          "Netherlands", "Greece", "Portugal", "Sweden")
+
+EU31 <- c("Austria", "Croatia", "Belgium", "Bulgaria", "Cyprus", 
+          "Czech Republic", "Germany", "Denmark", "Spain", "Estonia", "Finland",
+          "France", "United Kingdom", "Greece", "Hungary", "Ireland", "Italy",
+          "Lithuania", "Luxembourg", "Latvia", "Malta", "Netherlands", "Poland",
+          "Portugal", "Romania", "Slovak Republic", "Slovenia", "Sweden", 
+          "Switzerland", "Iceland", "Norway")
+
+OECD <- readRDS(here("data/out/oecd_countries.rds"))
+
+```
+
+
+## EDGAR V6.0
+
+```{r EDGARV6}
+edgar <- read_excel(here("data", "raw", "v60_CO2_excl_short-cycle_org_C_1970_2018.xls"), skip = 9) %>%
+  mutate(Name = ifelse(Name=="Slovakia", "Slovak Republic", ifelse(Name == "Korea, Republic of", "Korea", Name))) %>%
+  pivot_longer(cols = starts_with("Y_"), names_to = "year", values_to = "emissions") %>% 
+  clean_names() %>% 
+  mutate(year=as.numeric(str_remove(year, "Y_")), emissions = as.numeric(emissions)) %>% 
+  rename(country = name, ipcc_code = ipcc_code_2006_for_standard_report, ipcc_code_name = ipcc_code_2006_for_standard_report_name) %>% 
+  select(-c_group_im24_sh)
+
+vars <- unique(edgar$ipcc_code)
+edgar_EU_OECD <- edgar %>% filter(country %in% c(EU31, OECD))
+edgar_else <- edgar %>% filter(!(country %in% c(EU31, OECD)))
+heatmaps <- c()
+
+for (i in vars){
+  print(sum(is.na(edgar$emissions[edgar$ipcc_code == i])))
+  for(j in 1:2){
+    if(j == 1){dat = edgar_EU_OECD}else{dat = edgar_else}
+  hm <- dat %>% 
+  filter(ipcc_code == i) %>% 
+  select(country, year, emissions) %>%
+  pivot_wider(id_cols = country, names_from = year, values_from = emissions) %>%
+  as.data.table %>% 
+  as.matrix(rownames = 1) %>% 
+    superheat(heat.na.col = "red", 
+              heat.pal = c(low = "skyblue", high = "darkblue"), 
+bottom.label.text.angle = 90,
+              title = paste(unique(edgar$ipcc_code_name[edgar$ipcc_code == i]), ifelse(identical(dat, edgar_EU_OECD), "edgar_EU_OECD", "edgar_else")))
+  heatmaps <- c(heatmaps, hm)
+  }
+}
+
+
+
+```
+
+## IRENA Electricity Generation
+
+IRENA (2021), Renewable energy statistics 2021, International Renewable
+Energy Agency (IRENA), Abu Dhabi
+
+Electricity generation (GWh) is the gross electricity produced by electricity
+plants, combined heat and power plants (CHP) and distributed generators measured
+at the output terminals of generation. It includes on-grid and off-grid generation,
+and it also includes the electricity self-consumed in energy industries; not
+only the electricity fed into the grid (net electricity production).
+
+```{r IRENA Elec gen, echo=FALSE}
+ongrid <- read_xlsx(here("data", "raw", "ELECGEN_IRENA_ONGRID.xlsx"), range = cell_rows(2:79922)) %>%
+  mutate(country = ifelse(country=="Slovakia", "Slovak Republic",
+                          ifelse(country == "Czechia", "Czech Republic", 
+                                 ifelse(country == "United Kingdom of Great Britain and Northern Ireland", "United Kingdom",
+                                        ifelse(country == "Republic of Korea", "Korea",
+                                               ifelse(country == "United States of America", "United States",country))))), gwh = as.numeric(gwh)) %>%
+  fill(country, technology, on_off) %>%
+  pivot_wider(id_cols = c(country, year), names_from = technology, values_from = gwh) %>%
+  setNames(tolower(gsub(" ", "_", (names(.)))))
+
+ongrid$total_gwh <- rowSums(as.matrix(ongrid[,3:20]), na.rm = TRUE)
+
+offgrid <- read_xlsx(here("data", "raw", "ELECGEN_IRENA_OFFGRID.xlsx"), range = cell_rows(2:79922)) %>%
+  mutate(country = ifelse(country=="Slovakia", "Slovak Republic",
+                          ifelse(country == "Czechia", "Czech Republic", 
+                                 ifelse(country == "United Kingdom of Great Britain and Northern Ireland", "United Kingdom",
+                                        ifelse(country == "Republic of Korea", "Korea",
+                                               ifelse(country == "United States of America", "United States",country))))), gwh = as.numeric(gwh)) %>%
+  fill(country, technology, on_off) %>%
+  pivot_wider(id_cols = c(country, year), names_from = technology, values_from = gwh) %>% 
+  setNames(tolower(gsub(" ", "_", (names(.)))))
+
+offgrid$total_gwh <- rowSums(as.matrix(offgrid[,3:20]), na.rm = TRUE)
+
+gwh_on <- sum(select(ongrid, 3:20), na.rm = TRUE)
+gwh_off <- sum(select(offgrid, 3:20), na.rm = TRUE)
+gwh_on/(gwh_on + gwh_off)
+
+# writexl::write_xlsx(ongrid, here("data/out/clean_elecgen_ongrid_irena_2000_19.xlsx"))
+# writexl::write_xlsx(offgrid, here("data/out/clean_elecgen_offgrid_irena_2000_19.xlsx"))
+#setdiff(c(EU31, OECD), unique(offgrid$country))
+
+IRENA_EU_OECD <- ongrid %>% filter(country %in% c(EU31, OECD))
+IRENA_else <- ongrid %>% filter(!(country %in% c(EU31, OECD)))
+
+heatmaps <- c()
+for (i in names(ongrid[3:21])){
+  print(names(ongrid[i]))
+  for(j in 1:2){
+    if(j == 1){dat = IRENA_EU_OECD}else{dat = IRENA_else}
+  hm <- dat %>%
+  select(country, year, names(dat[i])) %>%
+  pivot_wider(id_cols = country, names_from = year, values_from = names(dat[i])) %>%
+  as.data.table %>%
+  as.matrix(rownames = 1) %>%
+    superheat(heat.na.col = "red",
+              heat.pal = c(low = "skyblue", high = "darkblue"),
+bottom.label.text.angle = 90,
+              title = paste(names(dat[i]), ifelse(identical(dat, IRENA_EU_OECD), "IRENA_EU_OECD", "IRENA_else")))
+  heatmaps <- c(heatmaps, hm)
+  }
+}
+
+```
+
+## OWID Emissions by sector
+
+Our complete CO2 and Greenhouse Gas Emissions dataset is a collection of key metrics maintained by Our World in Data. It is updated regularly and includes data on CO2 emissions (annual, per capita, cumulative and consumption-based), other greenhouse gases, energy mix, and other relevant metrics.
+
+The following "ghg-emissions-by-sector.csv" contains emissions by each sector (similar to in EDGAR).
+
+https://github.com/owid/co2-data
+
+```{r}
+sector <- read.csv(here("data", "raw", "ghg-emissions-by-sector.csv")) %>%
+  select(-2) %>% 
+  setNames(tolower(gsub("[[:punct:]]and", "", 
+                        gsub("energy", "", c("country", names(.)[2:13]))))) %>% 
+  mutate(country = ifelse(country == "Czechia", "Czech Republic",
+                                 ifelse(country == "South Korea", "Korea",
+                                        ifelse(country == "Slovakia", "Slovak Republic", country))))
+
+countries <- unique(sector$country)
+# plots <- list()
+# for (i in countries){
+#   p <- sector %>% 
+#     filter(., country == i) %>% 
+#     pivot_longer(names_to = "sector", cols = 3:13) %>% 
+#     ggplot(., aes(x = year, y = value, group = sector, color = sector)) +
+#     geom_line() +
+#     ggtitle(i)
+#   
+#   plots[[i]] <- p
+# }
+# 
+# library(gridExtra)
+# 
+# ggsave(
+#   filename = here("out", "/ghg_emissions_by_sector_plots.pdf"), 
+#   plot = marrangeGrob(plots, nrow=4, ncol=3), 
+#   width = 15, height = 9
+# )
+
+writexl::write_xlsx(sector, here("data", "out","owid_ghg_emissions_by_sector.xlsx"))
+
+#setdiff(c(EU31, OECD), unique(sector$country))
+
+owid_sector_EU_OECD <- sector %>% filter(country %in% c(EU31, OECD))
+owid_sector_else <- sector %>% filter(!(country %in% c(EU31, OECD)))
+
+# First for each country show heatmap of all columns
+# Then for each columns show all countries
+heatmaps <- c()
+for (i in names(sector[3:13])){
+  print(names(sector[i]))
+  for(j in 1:2){
+    if(j == 1){dat = owid_sector_EU_OECD}else{dat = owid_sector_else}
+  hm <- dat %>%
+  select(country, year, names(dat[i])) %>%
+  pivot_wider(id_cols = country, names_from = year, values_from = names(dat[i])) %>%
+  as.data.table %>%
+  as.matrix(rownames = 1) %>%
+    superheat(heat.na.col = "red",
+              heat.pal = c(low = "skyblue", high = "darkblue"),
+bottom.label.text.angle = 90,
+              title = paste(names(dat[i]), ifelse(identical(dat, owid_sector_EU_OECD), "owid_sector_EU_OECD", "owid_sector_else")))
+  heatmaps <- c(heatmaps, hm)
+  }
+}
+
+
+```
+
+## OWID All indicators
+```{r}
+owid_all <- read_excel(here("data", "out", "owid_all.xlsx")) %>% 
+  mutate(country = ifelse(country == "Czechia", "Czech Republic", ifelse(country == "Slovakia", "Slovak Republic", ifelse(country == "South Korea", "Korea", country))))
+
+# setdiff(c(EU31, OECD), owid_all$country)
+
+
+
+
+```
+
