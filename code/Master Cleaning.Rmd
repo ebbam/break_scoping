@@ -54,8 +54,8 @@ edgar_EU_OECD <- edgar %>% filter(country %in% c(EU31, OECD))
 edgar_else <- edgar %>% filter(!(country %in% c(EU31, OECD)))
 heatmaps <- c()
 
+# To be converted to a function for all datasets!
 for (i in vars){
-  print(sum(is.na(edgar$emissions[edgar$ipcc_code == i])))
   for(j in 1:2){
     if(j == 1){dat = edgar_EU_OECD}else{dat = edgar_else}
   hm <- dat %>% 
@@ -125,7 +125,6 @@ IRENA_else <- ongrid %>% filter(!(country %in% c(EU31, OECD)))
 
 heatmaps <- c()
 for (i in names(ongrid[3:21])){
-  print(names(ongrid[i]))
   for(j in 1:2){
     if(j == 1){dat = IRENA_EU_OECD}else{dat = IRENA_else}
   hm <- dat %>%
@@ -145,6 +144,14 @@ bottom.label.text.angle = 90,
 
 ## OWID Emissions by sector
 
+Annual greenhouse gas emissions by sector by country 1990 - 2018
+
+https://ourworldindata.org/emissions-by-sector#annual-greenhouse-gas-emissions-by-sector
+Greenhouse gas emissions from other fuel combustion, measured in tonnes of
+carbon dioxide-equivalents.
+
+Aggregated from CAIT Climate Data Explorer via Climate Watch
+
 Our complete CO2 and Greenhouse Gas Emissions dataset is a collection of key metrics maintained by Our World in Data. It is updated regularly and includes data on CO2 emissions (annual, per capita, cumulative and consumption-based), other greenhouse gases, energy mix, and other relevant metrics.
 
 The following "ghg-emissions-by-sector.csv" contains emissions by each sector (similar to in EDGAR).
@@ -160,28 +167,8 @@ sector <- read.csv(here("data", "raw", "ghg-emissions-by-sector.csv")) %>%
                                  ifelse(country == "South Korea", "Korea",
                                         ifelse(country == "Slovakia", "Slovak Republic", country))))
 
-countries <- unique(sector$country)
-# plots <- list()
-# for (i in countries){
-#   p <- sector %>% 
-#     filter(., country == i) %>% 
-#     pivot_longer(names_to = "sector", cols = 3:13) %>% 
-#     ggplot(., aes(x = year, y = value, group = sector, color = sector)) +
-#     geom_line() +
-#     ggtitle(i)
-#   
-#   plots[[i]] <- p
-# }
-# 
-# library(gridExtra)
-# 
-# ggsave(
-#   filename = here("out", "/ghg_emissions_by_sector_plots.pdf"), 
-#   plot = marrangeGrob(plots, nrow=4, ncol=3), 
-#   width = 15, height = 9
-# )
 
-writexl::write_xlsx(sector, here("data", "out","owid_ghg_emissions_by_sector.xlsx"))
+#writexl::write_xlsx(sector, here("data", "out","owid_ghg_emissions_by_sector.xlsx"))
 
 #setdiff(c(EU31, OECD), unique(sector$country))
 
@@ -192,7 +179,6 @@ owid_sector_else <- sector %>% filter(!(country %in% c(EU31, OECD)))
 # Then for each columns show all countries
 heatmaps <- c()
 for (i in names(sector[3:13])){
-  print(names(sector[i]))
   for(j in 1:2){
     if(j == 1){dat = owid_sector_EU_OECD}else{dat = owid_sector_else}
   hm <- dat %>%
@@ -215,9 +201,6 @@ bottom.label.text.angle = 90,
 ```{r}
 owid_all <- read_excel(here("data", "out", "owid_all.xlsx")) %>% 
   mutate(country = ifelse(country == "Czechia", "Czech Republic", ifelse(country == "Slovakia", "Slovak Republic", ifelse(country == "South Korea", "Korea", country))))
-
-# setdiff(c(EU31, OECD), owid_all$country)
-
 
 
 
