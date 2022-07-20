@@ -5,6 +5,12 @@ date: "`r Sys.Date()`"
 output: html_document
 ---
 
+## Introduction
+
+Main file for cleaning and judging completeness/scope of various downloaded 
+data files. Each chunk caters to one data file and, at this point, 
+only produces heat maps for each relevant variable in a dataset.
+
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 library(data.table)
