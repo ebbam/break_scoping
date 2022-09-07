@@ -41,6 +41,38 @@ EU31 <- c("Austria", "Croatia", "Belgium", "Bulgaria", "Cyprus",
 
 OECD <- readRDS(here("data/out/oecd_countries.rds"))
 
+
+gen_hms <- function(vars, ds, lab){
+  # Check that all EU31 and OECD countries are present/named correctly
+  test <- c(EU31, OECD)[!(c(EU31,OECD) %in% ds$country)]
+  if(length(test) == 0){
+    print("All OECD/EU31 countries present/correctly labelled.")
+  }else{print(test)}
+  
+  ds_eu_oecd <- ds %>% filter(country %in% c(EU31, OECD))
+  ds_else <- ds %>% filter(!(country %in% c(EU31, OECD)))
+  
+  heatmaps <- c()
+  
+  for(v in vars){
+    for(j in 1:2){
+      if(j == 1){dat = ds_eu_oecd}else{dat = ds_else}
+    hm <- dat %>% 
+      filter(get(lab) == v) %>% 
+      select(country, year, emissions) %>%
+      pivot_wider(id_cols = country, names_from = year, values_from = emissions) %>%
+      as.data.table %>%
+      as.matrix(rownames = 1) %>%
+      superheat(heat.na.col = "red",
+                heat.pal = c(low = "skyblue", high = "darkblue"),
+                bottom.label.text.angle = 90,
+                force.left.label = TRUE,
+                title = paste(v, ifelse(identical(dat, ds_eu_oecd), "EU_OECD", "ELSE")))
+      heatmaps <- c(heatmaps, hm)
+    }
+  }
+}
+
 ```
 
 
@@ -56,28 +88,46 @@ edgar <- read_excel(here("data", "raw", "v60_CO2_excl_short-cycle_org_C_1970_201
   select(-c_group_im24_sh)
 
 vars <- unique(edgar$ipcc_code)
-edgar_EU_OECD <- edgar %>% filter(country %in% c(EU31, OECD))
-edgar_else <- edgar %>% filter(!(country %in% c(EU31, OECD)))
-heatmaps <- c()
+gen_hms(vars, edgar, 'ipcc_code')
 
-# To be converted to a function for all datasets!
-for (i in vars){
-  for(j in 1:2){
-    if(j == 1){dat = edgar_EU_OECD}else{dat = edgar_else}
-  hm <- dat %>% 
-  filter(ipcc_code == i) %>% 
-  select(country, year, emissions) %>%
-  pivot_wider(id_cols = country, names_from = year, values_from = emissions) %>%
-  as.data.table %>% 
-  as.matrix(rownames = 1) %>% 
-    superheat(heat.na.col = "red", 
-              heat.pal = c(low = "skyblue", high = "darkblue"), 
-bottom.label.text.angle = 90,
-              title = paste(unique(edgar$ipcc_code_name[edgar$ipcc_code == i]), ifelse(identical(dat, edgar_EU_OECD), "edgar_EU_OECD", "edgar_else")))
-  heatmaps <- c(heatmaps, hm)
-  }
-}
+pdf("EDGAR_plots.pdf")
+edgar %>% select(country, year, ipcc_code, ipcc_code_name, emissions) %>% 
+  filter(emissions > 0) %>% 
+  group_by(ipcc_code_name) %>% 
+  summarise(start = min(year), end = max(year)) %>% 
+  ggplot() +
+    aes(y = ipcc_code_name) +
+    geom_segment(aes(x = start, 
+                     xend = end,
+                     yend = ipcc_code_name,
+                     color = ipcc_code_name), 
+                 size = 5,
+                 show.legend = FALSE) +
+  geom_text(aes(x = start, label = start), 
+              nudge_x = 3,
+              size = 3) +
+ labs(title = "EDGAR v6.0 Emissions data by sector", subtitle = paste("Year coverage from 1970 to 2020"))
+ 
+edgar %>% select(country, year, ipcc_code, ipcc_code_name, emissions) %>% 
+  filter(emissions > 0) %>% 
+  group_by(ipcc_code_name, year) %>% 
+  summarise(obs = n(), n_OECD = sum(country %in% c(EU31, OECD))) %>% 
+  ggplot(., aes(x = year)) + 
+  geom_col(aes(y = obs, fill = "blue")) +
+  geom_col(aes(y = n_OECD, fill = "green")) +
+  geom_hline(yintercept = 43, linetype = "dashed") +
+  facet_wrap(~ipcc_code_name) +
+  theme(legend.position = "none") +
+  labs(title = "EDGAR v6.0 Emissions data by sector", subtitle = "Country coverage from 1970 to 2020.")
 
+edgar %>% select(country, year, ipcc_code, ipcc_code_name, emissions) %>% 
+  #group_by(as.factor(country), ipcc_code_name) %>% 
+  ggplot(aes(x = year, y = emissions)) +
+  geom_line(aes(fill = country)) +
+  facet_wrap(~ipcc_code_name, scales = "free") +
+    labs(title = "EDGAR v6.0 Emissions data by sector", subtitle = "Emissions statistics by country from 1970 to 2020.")
+
+dev.off()
 
 
 ```
@@ -126,25 +176,50 @@ gwh_on/(gwh_on + gwh_off)
 # writexl::write_xlsx(offgrid, here("data/out/clean_elecgen_offgrid_irena_2000_19.xlsx"))
 #setdiff(c(EU31, OECD), unique(offgrid$country))
 
-IRENA_EU_OECD <- ongrid %>% filter(country %in% c(EU31, OECD))
-IRENA_else <- ongrid %>% filter(!(country %in% c(EU31, OECD)))
+ongrid %>% pivot_longer(cols = 3:21, names_to = 'source', values_to = 'emissions') %>% 
+  gen_hms(vars = names(ongrid[3:21]), ds = ., lab = 'source')
 
-heatmaps <- c()
-for (i in names(ongrid[3:21])){
-  for(j in 1:2){
-    if(j == 1){dat = IRENA_EU_OECD}else{dat = IRENA_else}
-  hm <- dat %>%
-  select(country, year, names(dat[i])) %>%
-  pivot_wider(id_cols = country, names_from = year, values_from = names(dat[i])) %>%
-  as.data.table %>%
-  as.matrix(rownames = 1) %>%
-    superheat(heat.na.col = "red",
-              heat.pal = c(low = "skyblue", high = "darkblue"),
-bottom.label.text.angle = 90,
-              title = paste(names(dat[i]), ifelse(identical(dat, IRENA_EU_OECD), "IRENA_EU_OECD", "IRENA_else")))
-  heatmaps <- c(heatmaps, hm)
-  }
-}
+offgrid %>% pivot_longer(cols = 3:21, names_to = 'source', values_to = 'emissions') %>% 
+  gen_hms(vars = names(offgrid[3:21]), ds = ., lab = 'source')
+
+pdf("IRENA_plots.pdf")
+ongrid %>% pivot_longer(cols = !c(country, year), values_drop_na = TRUE) %>% 
+  filter(value > 0)  %>% 
+  group_by(name) %>% 
+  summarise(start = as.numeric(min(year)), end = as.numeric(max(year))) %>% 
+  ggplot() +
+    aes(y = name) +
+    geom_segment(aes(x = start, 
+                     xend = end,
+                     yend = name,
+                     color = name), 
+                 size = 5,
+                 show.legend = FALSE) +
+  geom_text(aes(x = start, label = start), 
+              nudge_x = 0,
+              size = 3) +
+ labs(title = "IRENA Ongrid Electricity Generation by Energy Source", subtitle = paste("Year coverage from 2000 to 2020")) +
+  ylab("Energy Source") + xlab("Year")
+ 
+ongrid %>% pivot_longer(cols = !c(country, year), values_drop_na = TRUE) %>% 
+  filter(value > 0)  %>% 
+  group_by(name, year) %>% 
+  summarise(obs = n(), n_OECD = sum(country %in% c(EU31, OECD))) %>% 
+  ggplot(., aes(x = year)) + 
+  geom_col(aes(y = obs, fill = "blue")) +
+  geom_col(aes(y = n_OECD, fill = "green")) +
+  geom_hline(yintercept = 43, linetype = "dashed") +
+  facet_wrap(~name) +
+  theme(legend.position = "none") +
+  labs(title = "IRENA Ongrid Electricity Generation by Energy Source", subtitle = "Country coverage from 2000 to 2020.")
+
+ongrid %>% pivot_longer(cols = !c(country, year), values_drop_na = TRUE) %>% 
+  ggplot(aes(x = year, y = value, group = country)) +
+  geom_line(aes(fill= country)) +
+  facet_wrap(~name, scales = "free") +
+  labs(title = "IRENA Ongrid Electricity Generation by Energy Source", subtitle = "Country generation statistics from 2000 to 2020.")
+
+dev.off()
 
 ```
 
@@ -166,6 +241,7 @@ https://github.com/owid/co2-data
 
 ```{r}
 sector <- read.csv(here("data", "raw", "ghg-emissions-by-sector.csv")) %>%
+  tibble() %>% 
   select(-2) %>% 
   setNames(tolower(gsub("[[:punct:]]and", "", 
                         gsub("energy", "", c("country", names(.)[2:13]))))) %>% 
@@ -175,40 +251,225 @@ sector <- read.csv(here("data", "raw", "ghg-emissions-by-sector.csv")) %>%
 
 
 #writexl::write_xlsx(sector, here("data", "out","owid_ghg_emissions_by_sector.xlsx"))
-
 #setdiff(c(EU31, OECD), unique(sector$country))
 
-owid_sector_EU_OECD <- sector %>% filter(country %in% c(EU31, OECD))
-owid_sector_else <- sector %>% filter(!(country %in% c(EU31, OECD)))
+sector %>% pivot_longer(cols = !c(country, year), names_to = "sector", values_to = "emissions") %>% 
+  gen_hms(names(sector[3:13]), ., 'sector')
 
-# First for each country show heatmap of all columns
-# Then for each columns show all countries
-heatmaps <- c()
-for (i in names(sector[3:13])){
-  for(j in 1:2){
-    if(j == 1){dat = owid_sector_EU_OECD}else{dat = owid_sector_else}
-  hm <- dat %>%
-  select(country, year, names(dat[i])) %>%
-  pivot_wider(id_cols = country, names_from = year, values_from = names(dat[i])) %>%
-  as.data.table %>%
-  as.matrix(rownames = 1) %>%
-    superheat(heat.na.col = "red",
-              heat.pal = c(low = "skyblue", high = "darkblue"),
-bottom.label.text.angle = 90,
-              title = paste(names(dat[i]), ifelse(identical(dat, owid_sector_EU_OECD), "owid_sector_EU_OECD", "owid_sector_else")))
-  heatmaps <- c(heatmaps, hm)
-  }
-}
+pdf("OWID_emissions_by_sector_plots.pdf")
+sector %>% pivot_longer(cols = !c(country, year), values_drop_na = TRUE) %>% 
+  filter(value > 0)  %>% 
+  group_by(name) %>% 
+  summarise(start = as.numeric(min(year)), end = as.numeric(max(year))) %>% 
+  ggplot() +
+    aes(y = name) +
+    geom_segment(aes(x = start, 
+                     xend = end,
+                     yend = name,
+                     color = name), 
+                 size = 5,
+                 show.legend = FALSE) +
+  geom_text(aes(x = start, label = start), 
+              nudge_x = 0,
+              size = 3) +
+ labs(title = "OWID Emissions by Sector", subtitle = paste("Year coverage from 1990 to 2018")) +
+  ylab("Sector") + xlab("Year")
+ 
+sector %>% pivot_longer(cols = !c(country, year), values_drop_na = TRUE) %>% 
+  filter(value > 0)  %>% 
+  group_by(name, year) %>% 
+  summarise(obs = n(), n_OECD = sum(country %in% c(EU31, OECD))) %>% 
+  ggplot(., aes(x = year)) + 
+  geom_col(aes(y = obs, fill = "blue")) +
+  geom_col(aes(y = n_OECD, fill = "green")) +
+  geom_hline(yintercept = 43, linetype = "dashed") +
+  facet_wrap(~name) +
+  theme(legend.position = "none") +
+  labs(title = "OWID Emissions by Sector", subtitle = "Country coverage from 1990 to 2018.")
 
-
+sector %>% pivot_longer(cols = !c(country, year), values_drop_na = TRUE) %>% 
+  ggplot(aes(x = year, y = value, group = country)) +
+  geom_line(aes(fill= country)) +
+  facet_wrap(~name, scales = "free") +
+  labs(title = "OWID Emissions by Sector", subtitle = "Emissions statistics by sector and country.")
+dev.off()
 ```
 
 ## OWID All indicators
+Consumption data available for the following energy sources. 
+All sources are measured in pct_change, twh_change, and total_consumption. 
+Only coal, biofuel, fossil also have an indicator for consumption per capita. 
+Would therefore recommend not using per capita numbers.:
+- energy
+- biofuel
+- coal
+- fossil
+- gas
+- gydro
+- low carbon
+- nuclear
+- oil
+- renewables
+- other renewables
+- solar
+- wind
+
+Energy share by source (1965-) has a longer time horizon than electricity share by source (1985 - ). 
+
 ```{r}
 owid_all <- read_excel(here("data", "out", "owid_all.xlsx")) %>% 
-  mutate(country = ifelse(country == "Czechia", "Czech Republic", ifelse(country == "Slovakia", "Slovak Republic", ifelse(country == "South Korea", "Korea", country))))
+  mutate(country = ifelse(country == "Czechia", "Czech Republic", ifelse(country == "Slovakia", "Slovak Republic", ifelse(country == "South Korea", "Korea",country))))
 
+owid_all %>% pivot_longer(cols = !c(country, year, iso_code), names_to = 'sector_share', values_to = 'emissions') %>% gen_hms(vars = names(owid_all[4:28]), ds = ., lab = 'sector_share')
+
+# lapply(unique(sub("\\_.*", "", names(owid_all))), function(x) grep(x, grep('share', names(owid_all), value = TRUE), value = TRUE))
+# 
+# setdiff(names(owid_all), c('country', 'iso_code', 'year', 'population', grep("cons|prod|share|elec_per_capita|electricity|energy_per_capita", names(owid_all), value = TRUE)))
+# 
+# grep("energy", names(owid_all), value = TRUE)
+
+# sources <- c("coal", "gas", "oil", "hydro", "nuclear", "^biofuel", "solar", "hydro", "wind", "^renewables", "other_renewables", "fossil", "low_carbon","other_renewable")
+# 
+# for(i in 1:length(var_owid$name)){
+#    s <- as.character(unlist(lapply(sources, function (x) x[grepl(x, var_owid$name[i])])))
+#    if(length(s) == 0){var_owid$source[i] <- NA}else{name_owid$source[i] <- sub("\\^","",s)}
+# }
+
+# OWID All looking at energy and electricity shares by source
+overview_owid <- owid_all %>%
+  pivot_longer(cols = !c(country, year, iso_code), values_drop_na = TRUE) %>% 
+  mutate(cat = case_when(grepl("per_capita|per_gdp|intensity", name) ~ "intensity",
+         grepl("prod", name) ~ "production",
+         grepl("cons", name) ~ "consumption",
+         grepl("share_energy", name) ~ "share_energy",
+         grepl("share_elec", name) ~ "share_electricity",
+         grepl("electricity", name) ~ "electricity"))
+
+
+cats <- unique(overview_owid$cat) %>% .[!is.na(.)]
+
+plots <- list()
+j = 0
+for(i in 1:length(cats)){
+ p1 <- overview_owid %>% filter(cat == cats[i]) %>% 
+    filter(value > 0) %>% 
+    group_by(name) %>% 
+    summarise(start = min(year), end = max(year)) %>% 
+    arrange(start) %>% 
+    ggplot() +
+      aes(y = name) +
+      geom_segment(aes(x = start, 
+                       xend = end,
+                       yend = name,
+                       color = name), 
+                   size = 5,
+                   show.legend = FALSE) +
+    geom_text(aes(x = start, label = start), 
+                nudge_x = 3,
+                size = 3) +
+    labs(title = paste("OWID",cats[i]), subtitle = "Time horizons from 1965 - 2020.") %>% print()
+ j = j + 1
+ plots[[j]] <- p1
+p2 <- overview_owid %>% filter(cat == cats[i]) %>% 
+  filter(value > 0) %>% 
+  group_by(name, year) %>% 
+  summarise(obs = n(), n_OECD = sum(country %in% c(EU31, OECD))) %>% 
+  ggplot(., aes(x = year)) + 
+  geom_col(aes(y = obs, fill = "blue")) +
+  geom_col(aes(y = n_OECD, fill = "green")) +
+  geom_hline(yintercept = 43, linetype = "dashed") +
+  facet_wrap(~name) +
+  theme(legend.position = "none") +
+  labs(title = paste("OWID",cats[i]), subtitle = "Country coverage from 1965 - 2020.") %>% print()
+j = j + 1
+plots[[j]] <- p2
+p3 <- overview_owid %>% filter(cat == cats[i]) %>% 
+  ggplot(aes(x = year, y = value, group = country)) +
+  geom_line(aes(fill= country)) +
+  facet_wrap(~name, scales = "free") +
+  labs(title = paste("OWID",cats[i]), subtitle = "Energy/electricity share statistics by source and country.") 
+j = j + 1
+plots[[j]] <- p3
+}
+
+pdf("OWID_all_plots.pdf")
+for(k in 1:length(plots)){
+  print(plots[[k]])
+}
+dev.off()
 
 
 ```
+# IEA Emissions from FF by type and sector
+WARNING: DATASET IS INCOMPLETE AFTER DOWNLOAD.
+Provides annual emissions by country for CO2, methane, NOx, and CO2e for the categories of:
+- Total
+- Coal, peat, and oil shale
+- Oil
+- Natural gas
+- Other
+```{r}
 
+iea_type_sector <- read_excel(here("data/raw/IEA_GHG_emissions_by fuel type _sector.xlsx"), 
+    skip = 2) %>% remove_empty %>% clean_names %>% fill(country, time, product) %>%
+     mutate_at(c(2,5:14), as.numeric)
+
+# For now filter on CO2 and CO2e
+j = 0
+for(k in c("Carbon Dioxide", "Carbon Dioxide Equivalent")){
+  for(m in c("Total","Coal, peat and oil shale","Oil","Natural gas","Other")){
+    
+  p <- iea_type_sector %>% 
+  filter(gas == k, product == m) %>% 
+  pivot_longer(cols = 5:14) %>% 
+  group_by(name, product) %>% 
+    summarise(start = min(time), end = max(time)) %>% 
+    arrange(start) %>% 
+    ggplot() +
+      aes(y = name) +
+      geom_segment(aes(x = start, 
+                       xend = end,
+                       yend = name,
+                       color = name), 
+                   size = 5,
+                   show.legend = FALSE) +
+    geom_text(aes(x = start, label = start), 
+                nudge_x = 3,
+                size = 3) +
+    labs(title = paste("IEA",k,"Emissions from", m, "by Sector"), subtitle = "Time horizons from 1980 - 2020.")
+    j = j + 1
+ plots[[j]] <- p
+ 
+p <- iea_type_sector %>% 
+  filter(gas == k, product == m) %>% 
+  pivot_longer(cols = 5:14) %>% 
+  group_by(name, time) %>% 
+  summarise(obs = n(), n_OECD = sum(country %in% c(EU31, OECD))) %>% 
+  ggplot(., aes(x = time)) + 
+  geom_col(aes(y = obs, fill = "blue")) +
+  geom_col(aes(y = n_OECD, fill = "green")) +
+  geom_hline(yintercept = 43, linetype = "dashed") +
+  facet_wrap(~name) +
+  theme(legend.position = "none") +
+  labs(title = paste("IEA",k,"Emissions from", m, "by Sector"), subtitle = "Country coverage from 1980 - 2020.")
+    j = j + 1
+ plots[[j]] <- p
+ 
+p <- iea_type_sector %>%  filter(gas == k, product == m) %>% 
+  ggplot(aes(x = time, y = value, group = country)) +
+  geom_line(aes(fill= country)) +
+  facet_wrap(~name, scales = "free") +
+ labs(title = paste("IEA",k,"Emissions from", m, "by Sector"), subtitle = "Country statistics from 1980 - 2020.") 
+    j = j + 1
+ plots[[j]] <- p
+  }
+}
+
+```
+
+# OECD Emissions percentages by sector
+Skipped for now as it does not provide a super interesting insight. Relative 
+emissions of different sectors not disaggreggated by source fluctuates.
+"OECD_emissions_percentage_by_sector.xls"
+
+# 
