@@ -1,0 +1,105 @@
+---
+title: "Replication"
+author: "Ebba Mark"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+# Load libraries
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(data.table)
+library(dplyr)
+library(tidyr)
+library(openxlsx)
+library(stringr)
+library(gets)
+library(getspanel)
+
+EU15 <- c("Austria", "Belgium", "Germany", "Denmark", "Spain", "Finland",
+          "France", "United Kingdom", "Ireland", "Italy", "Luxembourg", 
+          "Netherlands", "Greece", "Portugal", "Sweden")
+
+EU31 <- c("Austria", "Croatia", "Belgium", "Bulgaria", "Cyprus", 
+          "Czech Republic", "Germany", "Denmark", "Spain", "Estonia", "Finland",
+          "France", "United Kingdom", "Greece", "Hungary", "Ireland", "Italy",
+          "Lithuania", "Luxembourg", "Latvia", "Malta", "Netherlands", "Poland",
+          "Portugal", "Romania", "Slovak Republic", "Slovenia", "Sweden", 
+          "Switzerland", "Iceland", "Norway")
+
+OECD <- readRDS(here("data/out/oecd_countries.rds"))
+
+
+```
+
+# EDGAR V6.0
+```{r}
+
+c <- unique(c(EU31, OECD))
+data <- full %>% 
+  #read_excel(here("data/out/elec_temp_iea.xlsx")) %>% 
+  filter(country %in% c & year >= 2000 & year <= 2018) %>% 
+  filter(country != "Malta" & country != "Costa Rica") %>% 
+  select(country, year, edgar_elec_emissions, gdp, pop, tot_gen_gwh, tot_cap_mw)
+
+
+  for(p.value in c(.05, .01, .001)){
+    
+    # Break analysis:
+    is <- isatpanel(
+      data = data,
+      formula = edgar_elec_emissions ~ gdp + pop + tot_gen_gwh,
+      index = c("country", "year"),
+      effect = "twoways",
+      iis = T,
+      fesis = T, 
+      t.pval=p.value
+    )
+    
+    # Print analysis results
+    cat(
+      paste0(
+        " \n ###########################", 
+        " \n # p-value: ", p.value,
+        " \n \n "), 
+      file = ltitle, 
+      append = T)
+    
+    sink(ltitle, append=T)
+    print(is)
+    sink()
+    
+    cat(" \n \n \n \n \n", 
+        file = ltitle, 
+        append = T)
+  }
+
+
+
+```
+
+
+# OWID
+```{r}
+
+data_owid <- full %>% 
+  #read_excel(here("data/out/elec_temp_iea.xlsx")) %>% 
+  filter(country %in% c & year >= 2000 & year <= 2018) %>% 
+  filter(country != "Malta" & country != "Costa Rica") %>% 
+  select(country, year, owid_elec_emissions, gdp, pop, tot_gen_gwh, tot_cap_mw)
+
+```
+
+
+# IEA
+```{r}
+
+data_iea <- full %>% 
+  #read_excel(here("data/out/elec_temp_iea.xlsx")) %>% 
+  filter(country %in% c & year >= 2000 & year <= 2018) %>% 
+  filter(country != "Malta" & country != "Costa Rica") %>% 
+  select(country, year, elec_heat_emissions_ktco2, gdp, pop, tot_gen_gwh, tot_cap_mw)
+
+```
+
+
