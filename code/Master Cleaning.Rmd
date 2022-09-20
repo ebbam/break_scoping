@@ -12,127 +12,30 @@ data files. Each chunk caters to one data file and, at this point,
 only produces heat maps for each relevant variable in a dataset.
 
 ```{r setup, include=FALSE}
+rm(list = ls())
 knitr::opts_chunk$set(echo = TRUE)
+library(conflicted)
 library(data.table)
 library(here)
 library(tidyverse)
 library(readxl)
 library(openxlsx)
 library(stringr)
-library(gets)
-library(getspanel)
 library(janitor)
-library(superheat)
-library(skimr)
+library(vtable)
+conflict_prefer_all("dplyr", quiet = TRUE)
 
 ```
 
+# Dictionaries and functions
 ```{r}
-EU15 <- c("Austria", "Belgium", "Germany", "Denmark", "Spain", "Finland",
-          "France", "United Kingdom", "Ireland", "Italy", "Luxembourg", 
-          "Netherlands", "Greece", "Portugal", "Sweden")
 
-EU31 <- c("Austria", "Croatia", "Belgium", "Bulgaria", "Cyprus", 
-          "Czech Republic", "Germany", "Denmark", "Spain", "Estonia", "Finland",
-          "France", "United Kingdom", "Greece", "Hungary", "Ireland", "Italy",
-          "Lithuania", "Luxembourg", "Latvia", "Malta", "Netherlands", "Poland",
-          "Portugal", "Romania", "Slovak Republic", "Slovenia", "Sweden", 
-          "Switzerland", "Iceland", "Norway")
-
-OECD <- readRDS(here("data/out/oecd_countries.rds"))
-
-
-gen_hms <- function(vars, ds, lab){
-  # Check that all EU31 and OECD countries are present/named correctly
-  test <- c(EU31, OECD)[!(c(EU31,OECD) %in% ds$country)]
-  if(length(test) == 0){
-    print("All OECD/EU31 countries present/correctly labelled.")
-  }else{print(test)}
-  
-  ds_eu_oecd <- ds %>% filter(country %in% c(EU31, OECD))
-  ds_else <- ds %>% filter(!(country %in% c(EU31, OECD)))
-  
-  heatmaps <- c()
-  
-  for(v in vars){
-    for(j in 1:2){
-      if(j == 1){dat = ds_eu_oecd}else{dat = ds_else}
-    hm <- dat %>% 
-      filter(get(lab) == v) %>% 
-      select(country, year, emissions) %>%
-      pivot_wider(id_cols = country, names_from = year, values_from = emissions) %>%
-      as.data.table %>%
-      as.matrix(rownames = 1) %>%
-      superheat(heat.na.col = "red",
-                heat.pal = c(low = "skyblue", high = "darkblue"),
-                bottom.label.text.angle = 90,
-                force.left.label = TRUE,
-                title = paste(v, ifelse(identical(dat, ds_eu_oecd), "EU_OECD", "ELSE")))
-      heatmaps <- c(heatmaps, hm)
-    }
-  }
-}
+source(here("code/dicts.R"))
 
 ```
 
-
-## EDGAR V6.0
-
-```{r EDGARV6}
-edgar <- read_excel(here("data", "raw", "v60_CO2_excl_short-cycle_org_C_1970_2018.xls"), skip = 9) %>%
-  mutate(Name = ifelse(Name=="Slovakia", "Slovak Republic", ifelse(Name == "Korea, Republic of", "Korea", Name))) %>%
-  pivot_longer(cols = starts_with("Y_"), names_to = "year", values_to = "emissions") %>% 
-  clean_names() %>% 
-  mutate(year=as.numeric(str_remove(year, "Y_")), emissions = as.numeric(emissions)) %>% 
-  rename(country = name, ipcc_code = ipcc_code_2006_for_standard_report, ipcc_code_name = ipcc_code_2006_for_standard_report_name) %>% 
-  select(-c_group_im24_sh)
-
-vars <- unique(edgar$ipcc_code)
-gen_hms(vars, edgar, 'ipcc_code')
-
-pdf("EDGAR_plots.pdf")
-edgar %>% select(country, year, ipcc_code, ipcc_code_name, emissions) %>% 
-  filter(emissions > 0) %>% 
-  group_by(ipcc_code_name) %>% 
-  summarise(start = min(year), end = max(year)) %>% 
-  ggplot() +
-    aes(y = ipcc_code_name) +
-    geom_segment(aes(x = start, 
-                     xend = end,
-                     yend = ipcc_code_name,
-                     color = ipcc_code_name), 
-                 size = 5,
-                 show.legend = FALSE) +
-  geom_text(aes(x = start, label = start), 
-              nudge_x = 3,
-              size = 3) +
- labs(title = "EDGAR v6.0 Emissions data by sector", subtitle = paste("Year coverage from 1970 to 2020"))
- 
-edgar %>% select(country, year, ipcc_code, ipcc_code_name, emissions) %>% 
-  filter(emissions > 0) %>% 
-  group_by(ipcc_code_name, year) %>% 
-  summarise(obs = n(), n_OECD = sum(country %in% c(EU31, OECD))) %>% 
-  ggplot(., aes(x = year)) + 
-  geom_col(aes(y = obs, fill = "blue")) +
-  geom_col(aes(y = n_OECD, fill = "green")) +
-  geom_hline(yintercept = 43, linetype = "dashed") +
-  facet_wrap(~ipcc_code_name) +
-  theme(legend.position = "none") +
-  labs(title = "EDGAR v6.0 Emissions data by sector", subtitle = "Country coverage from 1970 to 2020.")
-
-edgar %>% select(country, year, ipcc_code, ipcc_code_name, emissions) %>% 
-  #group_by(as.factor(country), ipcc_code_name) %>% 
-  ggplot(aes(x = year, y = emissions)) +
-  geom_line(aes(fill = country)) +
-  facet_wrap(~ipcc_code_name, scales = "free") +
-    labs(title = "EDGAR v6.0 Emissions data by sector", subtitle = "Emissions statistics by country from 1970 to 2020.")
-
-dev.off()
-
-
-```
-
-## IRENA Electricity Generation
+## IRENA: Electricity generation, capacity, fuel share of electricity generation and capacity {.tabset}
+Multiple datasets about capacity, generation, offgrid and ongrid generation by source, renewable share of electricity and capacity
 
 IRENA (2021), Renewable energy statistics 2021, International Renewable
 Energy Agency (IRENA), Abu Dhabi
@@ -143,46 +46,159 @@ at the output terminals of generation. It includes on-grid and off-grid generati
 and it also includes the electricity self-consumed in energy industries; not
 only the electricity fed into the grid (net electricity production).
 
-```{r IRENA Elec gen, echo=FALSE}
-ongrid <- read_xlsx(here("data", "raw", "ELECGEN_IRENA_ONGRID.xlsx"), range = cell_rows(2:79922)) %>%
-  mutate(country = ifelse(country=="Slovakia", "Slovak Republic",
-                          ifelse(country == "Czechia", "Czech Republic", 
-                                 ifelse(country == "United Kingdom of Great Britain and Northern Ireland", "United Kingdom",
-                                        ifelse(country == "Republic of Korea", "Korea",
-                                               ifelse(country == "United States of America", "United States",country))))), gwh = as.numeric(gwh)) %>%
+### Dataset
+```{r}
+################################################################################
+# Electricity generation (GWh) by Country/area, Technology, Grid connection and Year
+ongrid <- read_xlsx(here("data", "raw", "Elec_gen_capacity", "ELECGEN_IRENA_ONGRID.xlsx"), range = cell_rows(2:79922)) %>%
+  mutate(country = ifelse(country %in% names(getcountry), unname(getcountry[country]), country), 
+         ongrid_elecgen_gwh = as.numeric(gwh)) %>%
   fill(country, technology, on_off) %>%
-  pivot_wider(id_cols = c(country, year), names_from = technology, values_from = gwh) %>%
-  setNames(tolower(gsub(" ", "_", (names(.)))))
+   select(-c(on_off, gwh)) # %>% 
+  # pivot_wider(id_cols = c(country, year), names_from = technology, values_from = gwh) %>%
+  # setNames(tolower(gsub(" ", "_", (names(.)))))
 
-ongrid$total_gwh <- rowSums(as.matrix(ongrid[,3:20]), na.rm = TRUE)
-
-offgrid <- read_xlsx(here("data", "raw", "ELECGEN_IRENA_OFFGRID.xlsx"), range = cell_rows(2:79922)) %>%
-  mutate(country = ifelse(country=="Slovakia", "Slovak Republic",
-                          ifelse(country == "Czechia", "Czech Republic", 
-                                 ifelse(country == "United Kingdom of Great Britain and Northern Ireland", "United Kingdom",
-                                        ifelse(country == "Republic of Korea", "Korea",
-                                               ifelse(country == "United States of America", "United States",country))))), gwh = as.numeric(gwh)) %>%
+# Electricity generation (GWh) by Country/area, Technology, Grid connection and Year
+offgrid <- read_xlsx(here("data", "raw", "Elec_gen_capacity", "ELECGEN_IRENA_OFFGRID.xlsx"), range = cell_rows(2:79922)) %>%
+  mutate(country = ifelse(country %in% names(getcountry), unname(getcountry[country]), country), offgrid_elecgen_gwh = as.numeric(gwh)) %>%
   fill(country, technology, on_off) %>%
-  pivot_wider(id_cols = c(country, year), names_from = technology, values_from = gwh) %>% 
-  setNames(tolower(gsub(" ", "_", (names(.)))))
+  select(-c(on_off, gwh)) # %>% 
+  # pivot_wider(id_cols = c(country, year), names_from = technology, values_from = gwh) %>% 
+  # setNames(tolower(gsub(" ", "_", (names(.)))))
 
-offgrid$total_gwh <- rowSums(as.matrix(offgrid[,3:20]), na.rm = TRUE)
+elec_gen <- left_join(ongrid, offgrid, by = c('year', 'country', 'technology')) %>%
+  rename(source = technology) %>% 
+  #mutate(country = ifelse(country == "Kosovo*", "Kosovo", country)) %>% 
+  rowwise() %>% 
+  mutate(tot_elecgen_gwh = sum(ongrid_elecgen_gwh, offgrid_elecgen_gwh, na.rm = TRUE), year = as.numeric(year)) %>% ungroup
 
-gwh_on <- sum(select(ongrid, 3:20), na.rm = TRUE)
-gwh_off <- sum(select(offgrid, 3:20), na.rm = TRUE)
-gwh_on/(gwh_on + gwh_off)
+rm(ongrid)
+rm(offgrid)
+# setdiff(offgrid$technology, ongrid$technology)
 
-# writexl::write_xlsx(ongrid, here("data/out/clean_elecgen_ongrid_irena_2000_19.xlsx"))
-# writexl::write_xlsx(offgrid, here("data/out/clean_elecgen_offgrid_irena_2000_19.xlsx"))
-#setdiff(c(EU31, OECD), unique(offgrid$country))
+# # Retained variables: elec_gen
+# - Country
+# - Year
+# - Source
+# - Offgrid electricity capacity Mw
+# - Ongrid electricity capacity Mw
+# - Total electricity capacity Mw
 
-ongrid %>% pivot_longer(cols = 3:21, names_to = 'source', values_to = 'emissions') %>% 
-  gen_hms(vars = names(ongrid[3:21]), ds = ., lab = 'source')
+################################################################################
+# Installed electricity capacity by country/area (MW) by Country/area, Technology, ONGRID connection and Year
+elec_cap_ongrid <- read_xlsx(here("data", "raw", "Elec_gen_capacity", "ELECCAP_ONGRID.xlsx"), 
+                             range = cell_rows(3:92798), 
+                             col_names = c("country", "source", "grid", "year", "ongrid_eleccap_mw"), 
+                             col_types = c("text", "text", "text", "numeric", "numeric")) %>% 
+  fill(country, source, grid) %>% 
+  mutate(country = ifelse(country %in% names(getcountry), unname(getcountry[country]), country)) %>% select(-grid)
 
-offgrid %>% pivot_longer(cols = 3:21, names_to = 'source', values_to = 'emissions') %>% 
-  gen_hms(vars = names(offgrid[3:21]), ds = ., lab = 'source')
 
-pdf("IRENA_plots.pdf")
+# Installed electricity capacity by country/area (MW) by Country/area, Technology, OFFGRID connection and Year
+elec_cap_offgrid <- read_xlsx(here("data", "raw", "Elec_gen_capacity", "ELECCAP_OFFGRID.xlsx"), 
+                              range = cell_rows(3:92798), col_names = c("country", "source", "grid", "year", "offgrid_eleccap_mw"), col_types = c("text", "text", "text", "numeric", "numeric")) %>% 
+  fill(country, source, grid) %>% 
+   mutate(country = ifelse(country %in% names(getcountry), unname(getcountry[country]), country), 
+          offgrid_eleccap_mw = as.numeric(offgrid_eleccap_mw)) %>% 
+  select(-grid)
+  
+test_diff(elec_cap_ongrid, elec_cap_offgrid, c("country", "source", "year"))
+                     
+elec_cap <- left_join(elec_cap_offgrid, elec_cap_ongrid, by = c("country", "source", "year")) %>% 
+  rowwise() %>%  
+  mutate(tot_eleccap_mw = sum(offgrid_eleccap_mw, ongrid_eleccap_mw, na.rm= TRUE)) %>% ungroup()
+
+rm(elec_cap_offgrid)
+rm(elec_cap_ongrid)
+################################################################################
+# Merged capacity and generation
+elec <- full_join(elec_cap, elec_gen, by = c("country", "source", "year"))
+rm(elec_cap)
+rm(elec_gen)
+################################################################################
+# Installed renewable electricity capacity (MW) by Region/country/area, Technology and Year
+# 239 countries
+re_eleccap <- read_xlsx(here("data", "raw", "Elec_gen_capacity", "RE-ELECCAP_20220908-084826.xlsx"), range = cell_rows(3:4544)) %>%
+  rename(country = `...1`, source = `...2`) %>% 
+  fill(country) %>%
+  pivot_longer(!c(country, source), names_to = "year", values_to = "inst_re_cap_mw") %>% 
+  mutate(country = ifelse(country %in% names(getcountry), unname(getcountry[country]), country), inst_re_cap_mw = as.numeric(inst_re_cap_mw), year = as.numeric(year))
+
+################################################################################
+# Renewable Electricity generation (GWh) by Region/country/area, Technology and Year
+# 239 countries
+re_elecgen <- read_xlsx(here("data", "raw", "Elec_gen_capacity", "RE-ELECGEN_20220908-084850.xlsx"), range = cell_rows(3:4734)) %>% 
+  rename(country = `...1`, source = `...2`) %>% 
+  fill(country) %>%
+  filter(!(country %in% c("World","Africa","C America + Carib","Eurasia","Europe","EU 27","Middle East","N America","Oceania","S America"))) %>% 
+  pivot_longer(!c(country, source), names_to = "year", values_to = "re_elecgen_gwh") %>% 
+  mutate(country = ifelse(country %in% names(getcountry), unname(getcountry[country]), country), year = as.numeric(year))
+
+test_diff(re_eleccap, re_elecgen,c('country', 'source', 'year'))
+re_capgen <- full_join(re_eleccap, re_elecgen, by = c('country', 'source', 'year'))
+
+rm(re_eleccap)
+rm(re_elecgen)
+################################################################################
+# Renewable energy share of electricity capacity and generation (%) by Region/country/area, Indicator and Year
+# 234 countries
+re_share_elec <- read_xlsx(here("data", "raw", "Elec_gen_capacity", "RESHARE_20220908-084915.xlsx"), range = cell_rows(3:471)) %>% 
+  rename(country = `...1`, indicator = `...2`) %>% 
+  fill(country) %>%
+  pivot_longer(!c(country, indicator), values_transform = as.numeric, names_to = "year") %>% 
+  pivot_wider(names_from = indicator, values_from = value) %>% 
+  rename(re_share_eleccap_pct = `RE share of electricity capacity (%)`, re_share_elecgen_pct = `RE share of electricity generation (%)`) %>% 
+  mutate(country = ifelse(country %in% names(getcountry), unname(getcountry[country]), country))
+
+
+# Combining re_share_elec, elec
+elec_panel <- elec %>% 
+  group_by(country, year) %>% 
+  summarize(offgrid_cap_mw = sum(offgrid_eleccap_mw, na.rm = TRUE),
+            ongrid_cap_mw = sum(ongrid_eleccap_mw, na.rm = TRUE),
+            tot_cap_mw = sum(tot_eleccap_mw, na.rm = TRUE),
+            ongrid_gen_gwh = sum(ongrid_elecgen_gwh, na.rm = TRUE), 
+            offgrid_gen_gwh = sum(offgrid_elecgen_gwh, na.rm = TRUE), 
+            tot_gen_gwh = sum(tot_elecgen_gwh, na.rm = TRUE)) %>% ungroup()
+rm(elec)
+
+re_panel <- re_capgen %>% 
+  filter(source == "Total renewable energy" & country != "Asia") %>% 
+  select(-source)
+
+rm(re_capgen)
+                    
+re_share_panel <- re_share_elec %>% 
+  filter(!(country %in% c("World", "North America", "Middle East", "South America", 
+                          "Africa", "Eurasia", "Europe", "European Union", "Central America and the Caribbean", 
+                          "Asia", "Oceania"))) %>% 
+  mutate(year = as.numeric(year))
+
+rm(re_share_elec)
+
+test_diff(elec_panel, re_panel, c('country', 'year'))
+test_diff(elec_panel, re_share_panel, c('country', 'year'))
+test_diff(re_panel, re_share_panel, c('country', 'year'))
+
+tot_elec_panel <- left_join(re_panel, elec_panel, by = c('country', 'year')) %>% left_join(., re_share_panel, by = c('country', 'year')) %>% tibble()
+rm(re_panel)
+rm(elec_panel)
+rm(re_share_panel)
+labs <- data.frame(varnames = names(tot_elec_panel),
+varlabels = c('country', 'year', "installed renewable energy capacity (mw)", "renewable electricity generation (gwh)", "offgrid electricity capacity (mw)", "ongrid electricity capacity (mw)", "total electricity capacity (mw)", "ongrid electricity generation (gwh)", "offgrid electricity generation (gwh)", "total electricity generation (gwh)", "renewable share of electricity capacity (%)", "renewable share of electricity generation (%)"))
+
+#vtable(tot_elec_panel, labels = labs, opts = opts)
+
+#opts = c(country = NA)
+#write_csv(tot_elec_panel, here("data/temp/elecgencap_re_share_IRENA.csv"))
+
+```
+
+
+### Plots
+```{r IRENA Elec gen, eval = FALSE, echo=FALSE}
+
+# pdf("IRENA_plots.pdf")
 ongrid %>% pivot_longer(cols = !c(country, year), values_drop_na = TRUE) %>% 
   filter(value > 0)  %>% 
   group_by(name) %>% 
@@ -219,11 +235,114 @@ ongrid %>% pivot_longer(cols = !c(country, year), values_drop_na = TRUE) %>%
   facet_wrap(~name, scales = "free") +
   labs(title = "IRENA Ongrid Electricity Generation by Energy Source", subtitle = "Country generation statistics from 2000 to 2020.")
 
-dev.off()
+# dev.off()
 
 ```
 
-## OWID Emissions by sector
+
+## BP Stats Review {.tabset}
+
+For now, all variables are retained
+electfuel: total (KEEP), coal (KEEP), gas (KEEP), [hydro], [nuclear], oil (KEEP), other (KEEP)
+- twh: biogeo, hydro (KEEP), nuclear(KEEP), ren power, solar, wind
+- twh_net: biogeo, hydro, nuclear, ren power, solar, wind
+- twh > electfuel
+- twh ?? twh_net
+### Dataset
+```{r}
+#tot_elec_panel <- read_csv(here("data/temp/elecgencap_re_share_IRENA.csv"))
+
+bp <- read_excel(here("data/raw/bp-stats-review-2022-consolidated-dataset-panel-format.xlsx")) %>%
+  filter(!((Country == "Russian Federation" & Year < 1985) | (Country == "USSR" & Year >= 1985))) %>% 
+  mutate(country = ifelse(Country %in% names(getcountry), unname(getcountry[Country]),
+                          ifelse(Country == "USSR", "Russia", Country)),
+         year = Year) %>% 
+  arrange(country, year) %>% 
+    select(country, year, pop, EU, OECD, starts_with("co2_"), starts_with("elect"), contains("twh")) %>% 
+  filter(!grepl("Other", country) & !grepl("Total", country) & country != "Rest of World") 
+
+tot_elec_panel_bp <- full_join(tot_elec_panel, bp, by = c("country", "year"))
+rm(tot_elec_panel)
+rm(bp)
+##write_xl::write_xlsx(tot_elec_panel_bp, here("data/temp/elec_bp.xlsx"))
+ 
+```
+
+## EDGAR V6.0 {.tabset}
+### Dataset
+Issue: Serbia and Montenegro are combined in this dataset....
+```{r}
+
+edgar_full <- read_excel(here("data", "raw", "v60_CO2_excl_short-cycle_org_C_1970_2018.xls"), skip = 9) %>%
+  pivot_longer(cols = starts_with("Y_"), names_to = "year", values_to = "emissions") %>% 
+  clean_names() %>% 
+  mutate(year=as.numeric(str_remove(year, "Y_")), emissions = as.numeric(emissions)) %>% 
+  rename(country = name, ipcc_code = ipcc_code_2006_for_standard_report, ipcc_code_name = ipcc_code_2006_for_standard_report_name) %>% 
+  select(-c_group_im24_sh) %>% 
+  filter(country != "Int. Shipping" & country != "Int. Aviation") %>% 
+  mutate(country = ifelse(country %in% names(getcountry), unname(getcountry[country]), country))
+
+# Create a panel with all sectors: country - year - sector
+# write.xlsx(edgar_full, here("data/temp/edgar_panel_full.xlsx"))
+
+edgar <- edgar_full %>% 
+  filter(ipcc_code == "1.A.1.a") %>% 
+  select(country, year, emissions) %>% 
+  rename(edgar_elec_emissions = emissions)
+test_diff(tot_elec_panel_bp, edgar, c("country", "year"))
+
+rm(edgar_full)
+
+edgar_elec_temp <- full_join(edgar, tot_elec_panel_bp, by = c("country", "year"))
+rm(edgar)
+rm(tot_elec_panel_bp)
+#write.xlsx(edgar_elec_temp, here("data/temp/edgar_elec_temp.xlsx"))
+
+```
+
+### Plots
+```{r, eval = FALSE}
+#pdf("EDGAR_plots.pdf")
+edgar %>% select(country, year, ipcc_code, ipcc_code_name, emissions) %>% 
+  filter(emissions > 0) %>% 
+  group_by(ipcc_code_name) %>% 
+  summarise(start = min(year), end = max(year)) %>% 
+  ggplot() +
+    aes(y = ipcc_code_name) +
+    geom_segment(aes(x = start, 
+                     xend = end,
+                     yend = ipcc_code_name,
+                     color = ipcc_code_name), 
+                 size = 5,
+                 show.legend = FALSE) +
+  geom_text(aes(x = start, label = start), 
+              nudge_x = 3,
+              size = 3) +
+ labs(title = "EDGAR v6.0 Emissions data by sector", subtitle = paste("Year coverage from 1970 to 2020"))
+ 
+edgar %>% select(country, year, ipcc_code, ipcc_code_name, emissions) %>% 
+  filter(emissions > 0) %>% 
+  group_by(ipcc_code_name, year) %>% 
+  summarise(obs = n(), n_OECD = sum(country %in% c(EU31, OECD))) %>% 
+  ggplot(., aes(x = year)) + 
+  geom_col(aes(y = obs, fill = "blue")) +
+  geom_col(aes(y = n_OECD, fill = "green")) +
+  geom_hline(yintercept = 43, linetype = "dashed") +
+  facet_wrap(~ipcc_code_name) +
+  theme(legend.position = "none") +
+  labs(title = "EDGAR v6.0 Emissions data by sector", subtitle = "Country coverage from 1970 to 2020.")
+
+edgar %>% select(country, year, ipcc_code, ipcc_code_name, emissions) %>% 
+  #group_by(as.factor(country), ipcc_code_name) %>% 
+  ggplot(aes(x = year, y = emissions)) +
+  geom_line(aes(fill = country)) +
+  facet_wrap(~ipcc_code_name, scales = "free") +
+    labs(title = "EDGAR v6.0 Emissions data by sector", subtitle = "Emissions statistics by country from 1970 to 2020.")
+
+#dev.off()
+```
+
+## OWID Emissions by sector {.tabset}
 
 Annual greenhouse gas emissions by sector by country 1990 - 2018
 
@@ -239,25 +358,40 @@ The following "ghg-emissions-by-sector.csv" contains emissions by each sector (s
 
 https://github.com/owid/co2-data
 
+### Dataset
 ```{r}
-sector <- read.csv(here("data", "raw", "ghg-emissions-by-sector.csv")) %>%
+
+#edgar_elec_temp <- read.xlsx(here("data/temp/edgar_elec_temp.xlsx")) %>% tibble()
+
+owid_full <- read.csv(here("data", "raw", "ghg-emissions-by-sector.csv")) %>%
   tibble() %>% 
   select(-2) %>% 
   setNames(tolower(gsub("[[:punct:]]and", "", 
                         gsub("energy", "", c("country", names(.)[2:13]))))) %>% 
-  mutate(country = ifelse(country == "Czechia", "Czech Republic",
-                                 ifelse(country == "South Korea", "Korea",
-                                        ifelse(country == "Slovakia", "Slovak Republic", country))))
+  mutate(country = ifelse(country %in% names(getcountry), unname(getcountry[country]), country)) %>% 
+  filter(country != "European Union (27)" & country != "World")
+
+# save full sectoral panel
+#write.xlsx(owid_full, here("data/temp/owid_emissions_by_sector_full_panel.xlsx"))
+
+owid_elec <- owid_full %>% 
+  select(country, year, electricity.heat) %>% 
+  rename(owid_elec_emissions = electricity.heat)
+test_diff(edgar_elec_temp, owid_elec, c("country", "year"))
+
+elec_temp <- left_join(edgar_elec_temp, owid_elec, by = c("country", "year"))
+rm(edgar_elec_temp)
+rm(owid_elec)
+#write.xlsx(elec_temp, here("data/temp/elec_edgar_owid.xlsx"))
+
+```
 
 
-#writexl::write_xlsx(sector, here("data", "out","owid_ghg_emissions_by_sector.xlsx"))
-#setdiff(c(EU31, OECD), unique(sector$country))
+### Plots
+```{r, eval = FALSE}
 
-sector %>% pivot_longer(cols = !c(country, year), names_to = "sector", values_to = "emissions") %>% 
-  gen_hms(names(sector[3:13]), ., 'sector')
-
-pdf("OWID_emissions_by_sector_plots.pdf")
-sector %>% pivot_longer(cols = !c(country, year), values_drop_na = TRUE) %>% 
+#pdf("OWID_emissions_by_sector_plots.pdf")
+owid_full %>% pivot_longer(cols = !c(country, year), values_drop_na = TRUE) %>% 
   filter(value > 0)  %>% 
   group_by(name) %>% 
   summarise(start = as.numeric(min(year)), end = as.numeric(max(year))) %>% 
@@ -275,7 +409,7 @@ sector %>% pivot_longer(cols = !c(country, year), values_drop_na = TRUE) %>%
  labs(title = "OWID Emissions by Sector", subtitle = paste("Year coverage from 1990 to 2018")) +
   ylab("Sector") + xlab("Year")
  
-sector %>% pivot_longer(cols = !c(country, year), values_drop_na = TRUE) %>% 
+owid_full %>% pivot_longer(cols = !c(country, year), values_drop_na = TRUE) %>% 
   filter(value > 0)  %>% 
   group_by(name, year) %>% 
   summarise(obs = n(), n_OECD = sum(country %in% c(EU31, OECD))) %>% 
@@ -287,15 +421,17 @@ sector %>% pivot_longer(cols = !c(country, year), values_drop_na = TRUE) %>%
   theme(legend.position = "none") +
   labs(title = "OWID Emissions by Sector", subtitle = "Country coverage from 1990 to 2018.")
 
-sector %>% pivot_longer(cols = !c(country, year), values_drop_na = TRUE) %>% 
+owid_full %>% pivot_longer(cols = !c(country, year), values_drop_na = TRUE) %>% 
   ggplot(aes(x = year, y = value, group = country)) +
   geom_line(aes(fill= country)) +
   facet_wrap(~name, scales = "free") +
   labs(title = "OWID Emissions by Sector", subtitle = "Emissions statistics by sector and country.")
-dev.off()
+
+#dev.off()
 ```
 
-## OWID All indicators
+
+## OWID All indicators {.tabset}
 Consumption data available for the following energy sources. 
 All sources are measured in pct_change, twh_change, and total_consumption. 
 Only coal, biofuel, fossil also have an indicator for consumption per capita. 
@@ -316,25 +452,30 @@ Would therefore recommend not using per capita numbers.:
 
 Energy share by source (1965-) has a longer time horizon than electricity share by source (1985 - ). 
 
+### Dataset
 ```{r}
-owid_all <- read_excel(here("data", "out", "owid_all.xlsx")) %>% 
-  mutate(country = ifelse(country == "Czechia", "Czech Republic", ifelse(country == "Slovakia", "Slovak Republic", ifelse(country == "South Korea", "Korea",country))))
+#elec_temp <- read.xlsx(here("data/temp/elec_edgar_owid.xlsx"))
 
-owid_all %>% pivot_longer(cols = !c(country, year, iso_code), names_to = 'sector_share', values_to = 'emissions') %>% gen_hms(vars = names(owid_all[4:28]), ds = ., lab = 'sector_share')
+owid_all <- read_excel(here("data", "temp", "owid_all.xlsx"))
 
-# lapply(unique(sub("\\_.*", "", names(owid_all))), function(x) grep(x, grep('share', names(owid_all), value = TRUE), value = TRUE))
-# 
-# setdiff(names(owid_all), c('country', 'iso_code', 'year', 'population', grep("cons|prod|share|elec_per_capita|electricity|energy_per_capita", names(owid_all), value = TRUE)))
-# 
-# grep("energy", names(owid_all), value = TRUE)
+owid_elec <- owid_all %>% 
+  select(country, year, population, gdp, electricity_generation, electricity_demand, 
+         greenhouse_gas_emissions, per_capita_electricity, energy_cons_change_pct, 
+         energy_cons_change_twh, carbon_intensity_elec, primary_energy_consumption,
+         energy_per_gdp, energy_per_capita, net_elec_imports_share_demand,
+         net_elec_imports, contains("low_carbon"), contains("renewable"), 
+         contains("fossil")) %>% mutate(country = ifelse(country %in% names(getcountry), unname(getcountry[country]), country)) %>% 
+  mutate(country = ifelse(country == "USSR" & year < 1985, "Russia", ifelse(country == "Taiwan", "Chinese Taipei", country))) %>% 
+  filter(!(country %in% c("Africa", "Antarctica", "Asia Pacific", "Eastern Africa", "Europe", "European Union (27)", "Hawaiian Trade Zone", "Middle Africa", "Middle East", "Non-OECD", "OECD", "U.S. Territories", "Western Africa", "World", "Yugoslavia", "Czechoslovakia", "U.S. Pacific Islands", "East Germany", "West Germany", "CIS", "Wake Island", "USSR")) & year >= 1965)
 
-# sources <- c("coal", "gas", "oil", "hydro", "nuclear", "^biofuel", "solar", "hydro", "wind", "^renewables", "other_renewables", "fossil", "low_carbon","other_renewable")
-# 
-# for(i in 1:length(var_owid$name)){
-#    s <- as.character(unlist(lapply(sources, function (x) x[grepl(x, var_owid$name[i])])))
-#    if(length(s) == 0){var_owid$source[i] <- NA}else{name_owid$source[i] <- sub("\\^","",s)}
-# }
+test_diff(owid_elec, elec_temp, c("country", "year"))
+elec_temp <- left_join(elec_temp, owid_elec, by = c("country", "year"))
+rm(owid_elec)
+#write.xlsx(elec_temp, here("data/temp/elec_edgar_owid_all.xlsx"))
+```
 
+### Plots
+```{r, eval = FALSE}
 # OWID All looking at energy and electricity shares by source
 overview_owid <- owid_all %>%
   pivot_longer(cols = !c(country, year, iso_code), values_drop_na = TRUE) %>% 
@@ -392,84 +533,79 @@ j = j + 1
 plots[[j]] <- p3
 }
 
-pdf("OWID_all_plots.pdf")
+#pdf("OWID_all_plots.pdf")
 for(k in 1:length(plots)){
   print(plots[[k]])
 }
-dev.off()
-
-
+#dev.off()
 ```
-# IEA Emissions from FF by type and sector
-WARNING: DATASET IS INCOMPLETE AFTER DOWNLOAD.
-Provides annual emissions by country for CO2, methane, NOx, and CO2e for the categories of:
-- Total
-- Coal, peat, and oil shale
-- Oil
-- Natural gas
-- Other
+
+# IEA Emissions allocation to electricity and heat
 ```{r}
 
-iea_type_sector <- read_excel(here("data/raw/IEA_GHG_emissions_by fuel type _sector.xlsx"), 
-    skip = 2) %>% remove_empty %>% clean_names %>% fill(country, time, product) %>%
-     mutate_at(c(2,5:14), as.numeric)
+#elec_temp <- read_excel(here("data/temp/elec_edgar_owid_all.xlsx"))
 
-# For now filter on CO2 and CO2e
-j = 0
-for(k in c("Carbon Dioxide", "Carbon Dioxide Equivalent")){
-  for(m in c("Total","Coal, peat and oil shale","Oil","Natural gas","Other")){
-    
-  p <- iea_type_sector %>% 
-  filter(gas == k, product == m) %>% 
-  pivot_longer(cols = 5:14) %>% 
-  group_by(name, product) %>% 
-    summarise(start = min(time), end = max(time)) %>% 
-    arrange(start) %>% 
-    ggplot() +
-      aes(y = name) +
-      geom_segment(aes(x = start, 
-                       xend = end,
-                       yend = name,
-                       color = name), 
-                   size = 5,
-                   show.legend = FALSE) +
-    geom_text(aes(x = start, label = start), 
-                nudge_x = 3,
-                size = 3) +
-    labs(title = paste("IEA",k,"Emissions from", m, "by Sector"), subtitle = "Time horizons from 1980 - 2020.")
-    j = j + 1
- plots[[j]] <- p
- 
-p <- iea_type_sector %>% 
-  filter(gas == k, product == m) %>% 
-  pivot_longer(cols = 5:14) %>% 
-  group_by(name, time) %>% 
-  summarise(obs = n(), n_OECD = sum(country %in% c(EU31, OECD))) %>% 
-  ggplot(., aes(x = time)) + 
-  geom_col(aes(y = obs, fill = "blue")) +
-  geom_col(aes(y = n_OECD, fill = "green")) +
-  geom_hline(yintercept = 43, linetype = "dashed") +
-  facet_wrap(~name) +
-  theme(legend.position = "none") +
-  labs(title = paste("IEA",k,"Emissions from", m, "by Sector"), subtitle = "Country coverage from 1980 - 2020.")
-    j = j + 1
- plots[[j]] <- p
- 
-p <- iea_type_sector %>%  filter(gas == k, product == m) %>% 
-  ggplot(aes(x = time, y = value, group = country)) +
-  geom_line(aes(fill= country)) +
-  facet_wrap(~name, scales = "free") +
- labs(title = paste("IEA",k,"Emissions from", m, "by Sector"), subtitle = "Country statistics from 1980 - 2020.") 
-    j = j + 1
- plots[[j]] <- p
-  }
-}
+iea_elec <- read_excel(here("data/raw/IEA_emissions_electricity_heat_full.xlsx"), range = cell_rows(4:5943), 
+           col_names = c("country", "year", "none", "elec_heat_emissions_ktco2", "elec_heat_emissions_kgco2_pc")) %>%
+  select(-none) %>%
+  fill(country) %>% 
+  filter(!country %in% c("World","World aviation bunkers","World marine bunkers",
+                         "Africa","Other Africa","Middle East","OECD Americas",
+                         "Non-OECD Americas","Other non-OECD Americas","OECD Asia Oceania",
+                         "Non-OECD Asia (excluding China)","Other non-OECD Asia","OECD Europe",
+                         "Non-OECD Europe and Eurasia", "Former Soviet Union (if no detail)", 
+                         "Former Yugoslavia (if no detail)","Memo: IEA Total",
+                         "Memo: IEA and Accession/Association countries","Memo: OECD Total",
+                         "Memo: Non-OECD Total","Memo: Africa (UN)","Memo: Americas (UN)",
+                         "Memo: Asia (UN)","Memo: Europe (UN)","Memo: Oceania (UN)",
+                         "Memo: ASEAN","Memo: European Union-27","Memo: European Union-28",
+                         "Memo: FSU 15","Memo: G20","Memo: G7","Memo: G8","Memo: OPEC",
+                         "Memo: Annex B Kyoto Parties","Memo: Annex I EIT","Memo: Annex I Parties",
+                         "Memo: non-Annex I Parties", "Memo: Annex II Asia Oceania",
+                         "Memo: Annex II Europe","Memo: Annex II North America","Memo: Annex II Parties",
+                         "China (P.R. of China and Hong Kong, China)", 
+                         "Memo: Former Yugoslavia")) %>% 
+  mutate(across('country', str_replace, 'Memo: ', '')) %>% 
+  mutate(country = ifelse(country %in% names(getcountry), unname(getcountry[country]), country),
+         year = as.numeric(year),
+         elec_heat_emissions_ktco2 = as.numeric(elec_heat_emissions_ktco2),
+         elec_heat_emissions_kgco2_pc = as.numeric(elec_heat_emissions_kgco2_pc))
+
+test_diff(iea_elec, elec_temp, c("country", "year"))
+
+elec_temp <- left_join(elec_temp, iea_elec, by = c("country", "year"))
+rm(iea_elec)
+#write.xlsx(elec_temp, here("data", "out", "elec_temp_iea.xlsx"))
 
 ```
 
-# OECD Emissions percentages by sector
-Skipped for now as it does not provide a super interesting insight. Relative 
-emissions of different sectors not disaggreggated by source fluctuates.
-"OECD_emissions_percentage_by_sector.xls"
+# Population statistics
+```{r}
+#iea_elec <- read_excel(here("data", "out", "elec_temp_iea.xlsx"))
 
-# 
+pop_stats <- read.csv(here("data/raw/WB_pop_stats.csv"), nrows = 9114) %>% select(1,3,5) %>% 
+  rename(year = Time, country = Country.Name, population_wb = `Population..total..SP.POP.TOTL.`) %>% 
+  mutate(country = ifelse(country %in% names(getcountry), unname(getcountry[country]), country))
+
+gdp_stats <- read.csv(here("data/raw/WB_GDP.csv"), nrows = 9114) %>% 
+  select(1,3,5,6) %>% 
+  rename(year = Time, country = Country.Name, wb_gdp = 3, wb_gdppc = 4) %>% 
+  mutate(country = ifelse(country %in% names(getcountry), unname(getcountry[country]), country), year = as.numeric(year), wb_gdp  = as.numeric(wb_gdp), wb_gdppc = as.numeric(wb_gdppc)) 
+
+full <- left_join(pop_stats, gdp_stats, by = c("country", "year")) %>% 
+  filter(!(country %in% c("Channel Islands", "Isle of Man"))) %>% 
+  left_join(elec_temp, ., by = c("country", "year"))
+
+rm(pop_stats)
+rm(gdp_stats)
+rm(owid_all)
+rm(owid_full)
+rm(elec_temp)
+
+#saveRDS(full, here("data/out/elec_emissions_panel.RDS"))
+tester <- readRDS(here("data/out/elec_emissions_panel.RDS"))
+identical(unlist(tester), unlist(full))
+rm(tester)
+
+```
+
