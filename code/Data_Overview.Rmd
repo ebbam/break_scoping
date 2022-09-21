@@ -1,0 +1,366 @@
+---
+title: "Data Overview"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(conflicted)
+library(data.table)
+library(here)
+library(tidyverse)
+library(readxl)
+library(openxlsx)
+library(janitor)
+conflict_prefer_all("dplyr", quiet = TRUE)
+
+```
+
+
+```{r, echo = FALSE, warning = FALSE, message = FALSE}
+# Data and Plotting functions
+source(here("code/dicts.R"))
+regions <- read.xlsx(here("data/out/regions.xlsx"))
+data <- readRDS(here("data/out/elec_emissions_panel_clean.RDS"))
+
+gen_country <- function(df){
+  country_p <- df %>% 
+    pivot_longer(cols = !c(country, year), values_drop_na = TRUE) %>% 
+    filter(value > 0)  %>% 
+    group_by(name, year) %>% 
+    summarise(obs = n(), n_OECD = sum(country %in% union(EU31, OECD))) %>% 
+    ggplot(., aes(x = year)) + 
+    geom_col(aes(y = obs, fill = "blue")) +
+    geom_col(aes(y = n_OECD, fill = "green")) +
+    geom_hline(yintercept = 43, linetype = "dashed") +
+    facet_wrap(~name) +
+    theme(legend.position = "none")
+  return(country_p)
+}
+  
+gen_year <- function(df){
+  year_p <- df %>% 
+    pivot_longer(cols = !c(country, year), values_drop_na = TRUE) %>% 
+  filter(value > 0)  %>% 
+  group_by(name) %>% 
+  summarise(start = as.numeric(min(year)), end = as.numeric(max(year))) %>% 
+  ggplot() +
+    aes(y = name) +
+    geom_segment(aes(x = start, 
+                     xend = end,
+                     yend = name,
+                     color = name), 
+                 size = 5,
+                 show.legend = FALSE) +
+  geom_text(aes(x = start, label = start), 
+              nudge_x = 0,
+              size = 3) +
+    geom_text(aes(x = end, label = end), 
+              nudge_x = 0,
+              size = 3)
+  return(year_p)
+}
+
+
+
+```
+
+# 1. Data coverage: Electricity/Electricity & Heat Emissions
+First section gives overview of both geographical and time coverage for 
+8 indicators from 5 different data sources of emissions data for electricity.
+
+*Sources (in order of time range)*\
+BP Statistical Review (3) 1990-2021\
+OECD (1) 1990-2020 \
+IEA (1) 1990-2019\
+EU JRC EDGAR V6.0 (1) 1990-2018\
+Our World in Data (2) 2000-2021; 1990-2018\
+
+*Conclusions:*\
+OWID_1 and EDGAR provide broadest country coverage albeit ending in 2018.
+
+*Definitions:*\
+EDGAR: CO2 emissions from electricity, measured in thousand tonnes of 
+carbon dioxide-equivalents.\
+BP: Carbon Dioxide Emissions from Energy in Million tonnes of carbon dioxide.\
+OWID: The sum of all greenhouse gases from electricity and heat production, measured in tonnes of carbon dioxide equivalents.\
+OWID: Greenhouse-gas emissions produced in the generation of electricity, measured in million tonnes of CO2 equivalent.\
+OECD: Emissions from electricity in OECD countries.\
+IEA: Electricity and heat production contains the sum of emissions from electricity production, combined heat and power plants and heat plants. It is the sum of main activity producers and autoproducers. Emissions from own on-site use of fuel are included.\
+
+
+```{r, echo = FALSE, warning = FALSE, message = FALSE, fig.height =  4}
+
+emiss_data <- data %>% 
+  filter(year >= 1990) %>% 
+  # ID units
+  select(country, year, 
+  #EDGAR Emissions
+    "EDGAR V6.0: Electricity/Power Industry Emissions" = edgar_elec_emissions, 
+  #BP Energy emissions
+    "BP:CO2 Emissions from Energy" = co2_combust_mtco2, "BP: CO2 from Energy Per Capita" = co2_combust_pc, "BP: CO2 per EJ of Energy" = co2_combust_per_ej, 
+  # OWID Electricity and heat emissions
+    "OWID: Elec and Heat Production" = owid_elec_emissions, "OWID: Emissions from Elec Gen" = greenhouse_gas_emissions, 
+  # IEA Electricity and heat emissions
+    "IEA: Elec and Heat Production" = elec_heat_emissions_ktco2,
+  # OECD Emissions elec
+    "OECD: Elec Emissions" = emissions_elec) 
+
+gen_country(emiss_data) +
+  labs(title = "Country coverage: Emissions from Electricity")
+
+gen_year(emiss_data) +
+ labs(title = "Year coverage: Emissions from Electricity") +
+  ylab("") +
+ xlab("Year")
+
+
+```
+
+\newpage
+# Comparing sample country time series
+Conclusions:
+EDGAR and IEA data are nearly identical
+OWID Elec and OECD are similar
+OWID Elec_2 has a shorter time horizon and diverges from other series.
+
+## Canada, Germany, Japan, Norway
+
+```{r, echo = FALSE, warning = FALSE, message = FALSE, fig.align = 'center'}
+# All in tonnes CO2 or tonnes CO2e
+data %>% 
+  filter(year >= 1990 & country %in% c("Canada", "Japan", "Germany", "Norway")) %>% 
+  mutate(edgar_elec_emissions_tco2 = edgar_elec_emissions*1000, 
+         greenhouse_gas_emissions_tco2 = greenhouse_gas_emissions*1000000,
+         elec_heat_emissions_tco2 = elec_heat_emissions_ktco2*1000,
+         emissions_elec_k = emissions_elec*1000) %>%
+  select(country, year, 
+  #EDGAR Emissions: unit: tonnes of carbon dioxide-equivalents.
+    "EDGAR" = edgar_elec_emissions_tco2, 
+  #BP Energy emissions: million tonnes of carbon dioxide-equivalents
+    #co2_combust_mtco2, 
+  #co2_combust_pc, co2_combust_per_ej, 
+  # OWID Electricity and heat emissions
+   "OWID_Elec_Heat" = owid_elec_emissions, 
+  "OWID_Elec" = greenhouse_gas_emissions_tco2, 
+  # IEA Electricity and heat emissions
+    "IEA" = elec_heat_emissions_tco2,
+    #elec_heat_emissions_gco2_pc 
+  # OECD Emissions elec
+   "OECD"= emissions_elec_k
+  ) %>% 
+  pivot_longer(cols = !c(country, year), names_to = "Dataset") %>% 
+  group_by(Dataset) %>% 
+  ggplot(aes(x = year, y = value, color = Dataset)) + 
+  geom_line() +
+  facet_wrap(~country, scales="free") + 
+  ylab("Emissions from electricity in tonnes of CO2 or CO2e.") +
+  xlab("Year") +
+  ggtitle("Various Electricity Emissions Data")
+
+data_scaled <- 
+  data %>% 
+    filter(year >= 1990) %>% 
+    mutate(edgar_elec_emissions_tco2 = edgar_elec_emissions*1000, 
+           greenhouse_gas_emissions_tco2 = greenhouse_gas_emissions*1000000,
+           elec_heat_emissions_tco2 = elec_heat_emissions_ktco2*1000,
+           emissions_elec_k = emissions_elec*1000) %>%
+    select(country, year, 
+    #EDGAR Emissions: unit: tonnes of carbon dioxide-equivalents.
+      "EDGAR" = edgar_elec_emissions_tco2, 
+    #BP Energy emissions: million tonnes of carbon dioxide-equivalents
+      #co2_combust_mtco2, 
+    #co2_combust_pc, co2_combust_per_ej, 
+    # OWID Electricity and heat emissions
+     "OWID_Elec_Heat" = owid_elec_emissions, 
+    "OWID_Elec" = greenhouse_gas_emissions_tco2, 
+    # IEA Electricity and heat emissions
+      "IEA" = elec_heat_emissions_tco2,
+      #elec_heat_emissions_gco2_pc 
+    # OECD Emissions elec
+     "OECD"= emissions_elec_k
+    ) 
+
+```
+
+\newpage
+## BRICS(+)
+
+```{r, echo = FALSE, warning = FALSE, message = FALSE, fig.height = 7, fig.align = 'center'}
+
+data_scaled %>% 
+    filter(country %in% regions$BRICS) %>% 
+  pivot_longer(cols = !c(country, year), names_to = "Dataset") %>% 
+  group_by(Dataset) %>% 
+  ggplot(aes(x = year, y = value, color = Dataset)) + 
+  geom_line() +
+  facet_wrap(~country, scales="free") + 
+  ylab("Emissions from electricity in tonnes of CO2 or CO2e") +
+  xlab("Year") +
+  theme(legend.position = "top")
+  
+```
+
+## Eurasia & Non-EU/OECD Europe
+```{r, echo = FALSE, warning = FALSE, message = FALSE, fig.height = 9}
+data_scaled %>% 
+    filter(country %in% regions$Eurasia) %>% 
+  pivot_longer(cols = !c(country, year), names_to = "Dataset") %>% 
+  group_by(Dataset) %>% 
+  ggplot(aes(x = year, y = value, color = Dataset)) + 
+  geom_line() +
+  facet_wrap(~country, scales="free", ncol = 3) + 
+  ylab("Emissions from electricity in tonnes of CO2 or CO2e") +
+  xlab("Year") +
+  theme(legend.position = "top")
+
+```
+
+## South and Central America
+```{r, echo = FALSE, warning = FALSE, message = FALSE, fig.height = 11}
+
+data_scaled %>% 
+    filter(country %in% regions$South.America) %>% 
+  pivot_longer(cols = !c(country, year), names_to = "Dataset") %>% 
+  group_by(Dataset) %>% 
+  ggplot(aes(x = year, y = value, color = Dataset)) + 
+  geom_line() +
+  facet_wrap(~country, scales="free", ncol = 3) + 
+  ylab("Emissions from electricity in tonnes of CO2 or CO2e") +
+  xlab("Year") +
+  theme(legend.position = "top")
+
+```
+
+## MENA
+
+```{r, echo = FALSE, warning = FALSE, message = FALSE, fig.height=10}
+data_scaled %>% 
+    filter(country %in% regions$MENA) %>% 
+  pivot_longer(cols = !c(country, year), names_to = "Dataset") %>% 
+  group_by(Dataset) %>% 
+  ggplot(aes(x = year, y = value, color = Dataset)) + 
+  geom_line() +
+  facet_wrap(~country, scales="free", ncol = 3) + 
+  ylab("Emissions from electricity in tonnes of CO2 or CO2e") +
+  xlab("Year") +
+  theme(legend.position = "top")
+
+
+```
+
+## Asia
+
+```{r, echo = FALSE, warning = FALSE, message = FALSE, fig.height=10}
+data_scaled %>% 
+    filter(country %in% regions$Asia) %>% 
+  pivot_longer(cols = !c(country, year), names_to = "Dataset") %>% 
+  group_by(Dataset) %>% 
+  ggplot(aes(x = year, y = value, color = Dataset)) + 
+  geom_line() +
+  facet_wrap(~country, scales="free", ncol = 3) + 
+  ylab("Emissions from electricity in tonnes of CO2 or CO2e") +
+  xlab("Year") +
+  theme(legend.position = "top")
+
+
+```
+
+## Africa
+
+```{r, echo = FALSE, warning = FALSE, message = FALSE, fig.height=11}
+data_scaled %>% 
+    filter(country %in% regions$Africa) %>% 
+  pivot_longer(cols = !c(country, year), names_to = "Dataset") %>% 
+  group_by(Dataset) %>% 
+  ggplot(aes(x = year, y = value, color = Dataset)) + 
+  geom_line() +
+  facet_wrap(~country, scales="free", ncol = 4) + 
+  ylab("Emissions from electricity in tonnes of CO2 or CO2e") +
+  xlab("Year") +
+  theme(legend.position = "top")
+
+```
+
+# 2. Data Coverage: Controls, Generation, Capacity Data
+
+```{r, echo = FALSE, warning = FALSE, message = FALSE}
+
+cont_gencap <- data %>% 
+  filter(year >= 1990) %>% 
+  # ID units
+  select(country, year, 
+  # Pop and GDP controls
+  "GDP" = wb_gdp, "GDP Per Capita" = wb_gdppc, 
+  # Elec generation and capacity
+  "IRENA: Elec Generation (gwh)" = tot_gen_gwh, 
+  "IRENA: Installed Elec Capacity (MW)" = tot_cap_mw, 
+  "OWID: Elec Generation (twh)" = electricity_generation, 
+  "OWID: Elec Demand (twh)" =electricity_demand, 
+  "BP: Elec Generation (twh)" = electbyfuel_total, 
+  "OWID: Elec generation per capita (twh)" = per_capita_electricity)
+
+gen_country(cont_gencap) +
+    labs(title = "Country coverage: Controls, Generation, Capacity")
+
+gen_year(cont_gencap) + 
+  labs(title = "Year coverage: Controls, Generation, Capacity")+
+    ylab("") +
+  xlab("Year")
+
+```
+
+# 3. Data coverage: Other indicators of interest
+
+*Definitions:*\
+IRENA: carbon_intensity_elec: Carbon intensity of electricity production, measured in grams of carbon dioxide emitted per kilowatt-hour\
+IRENA: re_share_eleccap_pct: Renewable share of electricity capacity (%)\
+IRENA: re_elecgen_gwh: Renewable electricity generation (GWh)\
+IRENA: re_share_elecgen_pct: Renewable share of electricity generation (%)\
+BP: electbyfuel_ren_power: Electricity generated from renewables (TWh)\
+OWID: low_carbon_share_elec: Share of electricity generation that comes from low-carbon sources. This is the sum of electricity from renewables and nuclear\
+OWID: low_carbon_electricity: Electricity generation from low-carbon sources, measured in terawatt-hours. This is the sum of electricity generation from renewables and nuclear power.\
+OWID: renewables_electricity: Electricity generation from renewables, measured in terawatt-hours\
+OWID: fossil_share_elec: Share of electricity generation that comes from fossil fuels (coal, oil and gas combined)\
+```{r, echo = FALSE, warning = FALSE, message = FALSE}
+# Additional interesting indicators
+other_dat <- data %>% 
+  filter(year >= 1990) %>% 
+  mutate(re_elecgen_gwh = as.numeric(re_elecgen_gwh)) %>% 
+  # ID units
+  select(country, year, 
+         # Variables of interest
+         carbon_intensity_elec, re_share_eleccap_pct, re_elecgen_gwh, 
+         re_share_elecgen_pct, electbyfuel_ren_power, low_carbon_share_elec, 
+         low_carbon_electricity, renewables_electricity, 
+         fossil_share_elec)
+
+gen_country(other_dat) +
+  labs(title = "Country coverage: Other interesting variables")
+
+gen_year(other_dat) +
+  labs(title = "Year coverage: Other interesting indiactors")+
+  ylab("Indicator") + xlab("Year")
+```
+
+# Comparing sample country time series
+```{r, echo = FALSE, warning = FALSE, message = FALSE, fig.height = 10}
+other_dat %>%
+  filter(country %in% c("Canada", "Japan", "Germany", "Norway", "France", 
+                        "Sweden", "United Kingdom", "United States", "Japan", "Russia",
+                        "China", "Lithuania", "India", "Brazil", "Indonesia", "Argentina", "Austria")) %>% 
+  select(country, year, re_share_eleccap_pct,
+         re_share_elecgen_pct, low_carbon_share_elec,
+         fossil_share_elec) %>% 
+  pivot_longer(cols = !c(country, year), names_to = "Dataset") %>% 
+  group_by(Dataset) %>% 
+  ggplot(aes(x = year, y = value, color = Dataset)) + 
+  geom_line() +
+  facet_wrap(~country, scales="free", ncol = 4) +
+  ylab("Percentage") +
+  xlab("Year") +
+  ggtitle("Comparing country sample series")+
+  theme(legend.position = "top")
+
+
+```
