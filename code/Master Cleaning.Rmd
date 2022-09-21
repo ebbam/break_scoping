@@ -23,6 +23,7 @@ library(openxlsx)
 library(stringr)
 library(janitor)
 library(vtable)
+library(plm)
 conflict_prefer_all("dplyr", quiet = TRUE)
 
 ```
@@ -602,10 +603,37 @@ rm(owid_all)
 rm(owid_full)
 rm(elec_temp)
 
-#saveRDS(full, here("data/out/elec_emissions_panel.RDS"))
-tester <- readRDS(here("data/out/elec_emissions_panel.RDS"))
-identical(unlist(tester), unlist(full))
-rm(tester)
-
 ```
 
+# OECD Emissions by Sector
+Tonnes of CO2 equivalent, Thousands
+```{r}
+oecd_elec <- read_xlsx(here("data/raw/OECD_GHG_total_emissions_by sector.xlsx"), range = cell_rows(3:1629)) %>% 
+    clean_names() %>% 
+    fill(country) %>% 
+  select(country, year, total_emissions_excluding_lulucf, total_emissions_including_lulucf, x1_energy, x1a1_energy_industries, x1a4_residential_and_other_sectors, x1a5_energy_other) %>% 
+  rename(tot_emissions_excl_lulucf = total_emissions_excluding_lulucf, 
+         tot_emissions_incl_lulucf =  total_emissions_including_lulucf,
+         emissions_energy_total = x1_energy,
+         emissions_elec = x1a1_energy_industries,
+         emissions_residential = x1a4_residential_and_other_sectors,
+         emissions_energy_other = x1a5_energy_other) %>% 
+  mutate(country = ifelse(country %in% names(getcountry), unname(getcountry[country]), country), year = as.numeric(year)) %>% 
+  filter(country != "OECD Asia Oceania")
+
+test_diff(oecd_elec, full, c("country", "year"))
+
+OECD_vec <- OECD
+data_oecd <- left_join(full, oecd_elec, by = c("country", "year")) %>% 
+  select(-c(pop, population, gdp)) %>% 
+  mutate(EU = ifelse(country %in% EU31,1,0),
+         OECD = ifelse(country %in% OECD_vec,1,0)) 
+
+#saveRDS(data_oecd, here("data/out/elec_emissions_panel_clean.RDS"))
+tester <- readRDS(here("data/out/elec_emissions_panel_clean.RDS"))
+identical(tester, data_oecd)
+rm(data_oecd)
+rm(oecd_elec)
+rm(OECD_vec)
+
+```
