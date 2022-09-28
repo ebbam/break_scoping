@@ -17,37 +17,6 @@ country_dict <- readRDS(here("data/out/countrydict.RDS"))
 getcountry <- country_dict$country.name.en
 names(getcountry) <- country_dict$country.name.alt
 
-# gen_hms <- function(vars, ds, lab){
-#   # Check that all EU31 and OECD countries are present/named correctly
-#   test <- c(EU31, OECD)[!(c(EU31,OECD) %in% ds$country)]
-#   if(length(test) == 0){
-#     print("All OECD/EU31 countries present/correctly labelled.")
-#   }else{print(test)}
-#   
-#   ds_eu_oecd <- ds %>% filter(country %in% c(EU31, OECD))
-#   ds_else <- ds %>% filter(!(country %in% c(EU31, OECD)))
-#   
-#   heatmaps <- c()
-#   
-#   for(v in vars){
-#     for(j in 1:2){
-#       if(j == 1){dat = ds_eu_oecd}else{dat = ds_else}
-#       hm <- dat %>% 
-#         filter(get(lab) == v) %>% 
-#         select(country, year, emissions) %>%
-#         pivot_wider(id_cols = country, names_from = year, values_from = emissions) %>%
-#         as.data.table %>%
-#         as.matrix(rownames = 1) %>%
-#         superheat(heat.na.col = "red",
-#                   heat.pal = c(low = "skyblue", high = "darkblue"),
-#                   bottom.label.text.angle = 90,
-#                   force.left.label = TRUE,
-#                   title = paste(v, ifelse(identical(dat, ds_eu_oecd), "EU_OECD", "ELSE")))
-#       heatmaps <- c(heatmaps, hm)
-#     }
-#   }
-# }
-
 test_diff <- function(df1 = data.frame, df2 = data.frame, vars = list){
   for(i in 1:length(vars)){
     a <- df1 %>% pull(vars[i])
@@ -59,4 +28,43 @@ test_diff <- function(df1 = data.frame, df2 = data.frame, vars = list){
       print(paste(deparse(substitute(df2)),"has extra:",setdiff(b,a)))
     }else{print(paste(vars[i],"match"))}
   }
+}
+
+# Heat map generation
+gen_country <- function(df){
+  country_p <- df %>% 
+    pivot_longer(cols = !c(country, year), values_drop_na = TRUE) %>% 
+    filter(value > 0)  %>% 
+    group_by(name, year) %>% 
+    summarise(obs = n(), n_OECD = sum(country %in% union(EU31, OECD))) %>% 
+    ggplot(., aes(x = year)) + 
+    geom_col(aes(y = obs, fill = "blue")) +
+    geom_col(aes(y = n_OECD, fill = "green")) +
+    geom_hline(yintercept = 43, linetype = "dashed") +
+    facet_wrap(~name) +
+    theme(legend.position = "none")
+  return(country_p)
+}
+
+gen_year <- function(df){
+  year_p <- df %>% 
+    pivot_longer(cols = !c(country, year), values_drop_na = TRUE) %>% 
+    filter(value > 0)  %>% 
+    group_by(name) %>% 
+    summarise(start = as.numeric(min(year)), end = as.numeric(max(year))) %>% 
+    ggplot() +
+    aes(y = name) +
+    geom_segment(aes(x = start, 
+                     xend = end,
+                     yend = name,
+                     color = name), 
+                 size = 5,
+                 show.legend = FALSE) +
+    geom_text(aes(x = start, label = start), 
+              nudge_x = 0,
+              size = 3) +
+    geom_text(aes(x = end, label = end), 
+              nudge_x = 0,
+              size = 3)
+  return(year_p)
 }

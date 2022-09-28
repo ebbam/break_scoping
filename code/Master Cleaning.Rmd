@@ -21,7 +21,6 @@ library(readxl)
 library(openxlsx)
 library(stringr)
 library(janitor)
-library(vtable)
 library(plm)
 conflict_prefer_all("dplyr", quiet = TRUE)
 
@@ -40,19 +39,29 @@ Multiple datasets about capacity, generation, offgrid and ongrid generation by s
 IRENA (2021), Renewable energy statistics 2021, International Renewable
 Energy Agency (IRENA), Abu Dhabi
 
-Electricity generation (GWh) is the gross electricity produced by electricity
+*Electricity generation* (GWh) is the gross electricity produced by electricity
 plants, combined heat and power plants (CHP) and distributed generators measured
 at the output terminals of generation. It includes on-grid and off-grid generation,
 and it also includes the electricity self-consumed in energy industries; not
 only the electricity fed into the grid (net electricity production).
 
+The *renewable power capacity* data shown in these tables represents the maximum net generating capacity of power plants and other installations that use renewable energy sources to produce electricity.
+
+Renewable: Hydropower (renewable + pumped storage), Marine, Wind (onshore + offshore), Solar (PV + concentrated), Bioenergy (solid (bagasse, renewable municipal waste, other solids) + liquid + biogas), geothermal
+
 Retained variables: elec_gen
 - Country
 - Year
-- Source
-- Offgrid electricity capacity Mw
-- Ongrid electricity capacity Mw
-- Total electricity capacity Mw
+- Installed renewable capacity (Mw)
+- Renewable electricity generation (gwh)
+- Offgrid electricity capacity (Mw)
+- Ongrid electricity capacity (Mw)
+- Total electricity capacity (Mw)
+- Ongrid electricity generation (gwh)
+- Offgrid electricity generation (gwh)
+- Total electrciity generation (gwh)
+- Renewable share of electricity capacity (%)
+- Renewable share of electricity generation (%)
 
 
 ```{r}
@@ -178,26 +187,25 @@ tot_elec_panel <- left_join(re_panel, elec_panel, by = c('country', 'year')) %>%
 rm(re_panel)
 rm(elec_panel)
 rm(re_share_panel)
-labs <- data.frame(varnames = names(tot_elec_panel),
-varlabels = c('country', 'year', "installed renewable energy capacity (mw)", "renewable electricity generation (gwh)", "offgrid electricity capacity (mw)", "ongrid electricity capacity (mw)", "total electricity capacity (mw)", "ongrid electricity generation (gwh)", "offgrid electricity generation (gwh)", "total electricity generation (gwh)", "renewable share of electricity capacity (%)", "renewable share of electricity generation (%)"))
-
-#vtable(tot_elec_panel, labels = labs, opts = opts)
-
-#opts = c(country = NA)
-#write_csv(tot_elec_panel, here("data/temp/elecgencap_re_share_IRENA.csv"))
 
 ```
 
 ## BP Stats Review
-For now, all variables are retained
-electfuel: total (KEEP), coal (KEEP), gas (KEEP), [hydro], [nuclear], oil (KEEP), other (KEEP)
-- twh: biogeo, hydro (KEEP), nuclear(KEEP), ren power, solar, wind
-- twh_net: biogeo, hydro, nuclear, ren power, solar, wind
-- twh > electfuel
-- twh ?? twh_net
+BP Statistical Review of World Energy
+https://www.bp.com/en/global/corporate/energy-economics/statistical-review-of-world-energy.html
+Methodology: https://www.bp.com/content/dam/bp/business-sites/en/global/corporate/pdfs/energy-economics/statistical-review/bp-stats-review-2022-methodology.pdf
+
+co2_combust_mtco2: Carbon Dioxide Emissions from Energy in Million tonnes of carbon dioxide
+co2_combust_pc: 
+co2_combust_per_ej
+co2_mtco2: Carbon Dioxide Equivalent Emissions from Energy, Process Emissions, Methane, and Flaring in Million tonnes of carbon dioxide
+elect_twh
+electbyfuel_[]: Electricity generated from [source] (TWh)
+[]_twh: Electricity generation from [source] (TWh) [PREFER THIS INDICATOR TO ELECTBYFUEL FOR: NUCLEAR, HYDRO, RENEWABLE]
+[]_twh_net: Electricity generation less the electricity generation used to operate the generating station/plant.
+
 
 ```{r}
-#tot_elec_panel <- read_csv(here("data/temp/elecgencap_re_share_IRENA.csv"))
 
 bp <- read_excel(here("data/raw/bp-stats-review-2022-consolidated-dataset-panel-format.xlsx")) %>%
   filter(!((Country == "Russian Federation" & Year < 1985) | (Country == "USSR" & Year >= 1985))) %>% 
@@ -205,17 +213,27 @@ bp <- read_excel(here("data/raw/bp-stats-review-2022-consolidated-dataset-panel-
                           ifelse(Country == "USSR", "Russia", Country)),
          year = Year) %>% 
   arrange(country, year) %>% 
-    select(country, year, pop, EU, OECD, starts_with("co2_"), starts_with("elect"), contains("twh")) %>% 
+    select(country, year, starts_with("co2_"), starts_with("elect"), contains("twh")) %>% 
   filter(!grepl("Other", country) & !grepl("Total", country) & country != "Rest of World") 
 
 tot_elec_panel_bp <- full_join(tot_elec_panel, bp, by = c("country", "year"))
 rm(tot_elec_panel)
 rm(bp)
-##write.xlsx(tot_elec_panel_bp, here("data/temp/elec_bp.xlsx"))
  
 ```
 
 ## EDGAR V6.0
+
+Description: The Emissions Database for Global Atmospheric Research (EDGAR) provides independent estimates of the global anthropogenic emissions and emission trends, based on publicly available statistics, for the atmospheric modeling community as well as for policy makers. This scientific independent emission inventory is characterized by a coherent world historical trend from 1970 to year x-3, including emissions of all greenhouse gases, air pollutants and aerosols.
+
+
+EDGARv6.0 provides emissions of the three main greenhouse gases (CO2, CH4, N2O) and fluorinated gases per sector and country.
+
+CO2 emissions are provided separately for CO2_excl_short-cycle_org_C and CO2_short-cycle_org_C. Emissions of CO2_excl_short-cycle_org_C include all fossil CO2 sources, such as fossil fuel combustion, non-metallic mineral processes (e.g. cement production), metal (ferrous and non-ferrous) production processes, urea production, agricultural liming and solvents use. Large scale biomass burning with Savannah burning, forest fires, and sources and sinks from land-use, land-use change and forestry (LULUCF) are excluded.
+Emissions of fluorinated gases have been derived by multiple sources, most notably from country reporting where available. When not the case, activity data statistics have been derived by UNEP data, from scierntific literature and expert judgment.
+https://edgar.jrc.ec.europa.eu/dataset_ghg60
+
+edgar_elec_emissions: emissions from "Main Activity Electricity and Heat Production"
 Issue: Serbia and Montenegro are combined in this dataset....
 ```{r}
 
@@ -242,7 +260,6 @@ rm(edgar_full)
 edgar_elec_temp <- full_join(edgar, tot_elec_panel_bp, by = c("country", "year"))
 rm(edgar)
 rm(tot_elec_panel_bp)
-#write.xlsx(edgar_elec_temp, here("data/temp/edgar_elec_temp.xlsx"))
 
 ```
 
@@ -251,21 +268,15 @@ rm(tot_elec_panel_bp)
 Annual greenhouse gas emissions by sector by country 1990 - 2018
 
 https://ourworldindata.org/emissions-by-sector#annual-greenhouse-gas-emissions-by-sector
-Greenhouse gas emissions from other fuel combustion, measured in tonnes of
-carbon dioxide-equivalents.
+Breakdown of total greenhouse gases (the sum of all greenhouse gases, measured in tonnes of carbon dioxide equivalents) by sector. Our data on annual emissions of total greenhouse gas emissions, methane emissions and nitrous oxide emissions is sourced from the CAIT Climate Data Explorer, and downloaded from the Climate Watch Portal. It provides estimates on total greenhouse gas emissions (including, and excluding land use change as separate metrics); methane emissions; and nitrous oxide emissions. These are measured in carbon dioxide equivalents (CO2e) based on 100-year global warming potential factors for non-CO₂ gases.
 
 Aggregated from CAIT Climate Data Explorer via Climate Watch
 
-Our complete CO2 and Greenhouse Gas Emissions dataset is a collection of key metrics maintained by Our World in Data. It is updated regularly and includes data on CO2 emissions (annual, per capita, cumulative and consumption-based), other greenhouse gases, energy mix, and other relevant metrics.
-
 The following "ghg-emissions-by-sector.csv" contains emissions by each sector (similar to in EDGAR).
 
-https://github.com/owid/co2-data
-
+owid_elec_emissions: emissions from "electricity and heat production"
 
 ```{r}
-
-#edgar_elec_temp <- read.xlsx(here("data/temp/edgar_elec_temp.xlsx")) %>% tibble()
 
 owid_full <- read.csv(here("data", "raw", "ghg-emissions-by-sector.csv")) %>%
   tibble() %>% 
@@ -286,11 +297,14 @@ test_diff(edgar_elec_temp, owid_elec, c("country", "year"))
 elec_temp <- left_join(edgar_elec_temp, owid_elec, by = c("country", "year"))
 rm(edgar_elec_temp)
 rm(owid_elec)
-#write.xlsx(elec_temp, here("data/temp/elec_edgar_owid.xlsx"))
 
 ```
 
 ## OWID All indicators
+https://github.com/owid/energy-data
+
+Our complete Energy dataset is a collection of key metrics maintained by Our World in Data. It is updated regularly and includes data on energy consumption (primary energy, per capita, and growth rates), energy mix, electricity mix and other relevant metrics. Combined data from BP Statistical Review of World Energy, US EIA, The Shift Dataportal, Ember, 
+
 Consumption data available for the following energy sources. 
 All sources are measured in pct_change, twh_change, and total_consumption. 
 Only coal, biofuel, fossil also have an indicator for consumption per capita. 
@@ -311,9 +325,10 @@ Would therefore recommend not using per capita numbers.:
 
 Energy share by source (1965-) has a longer time horizon than electricity share by source (1985 - ). 
 
+For indicators see Variable Documentation.
+
 
 ```{r}
-#elec_temp <- read.xlsx(here("data/temp/elec_edgar_owid.xlsx"))
 
 owid_all <- read_excel(here("data", "temp", "owid_all.xlsx"))
 
@@ -330,13 +345,31 @@ owid_elec <- owid_all %>%
 test_diff(owid_elec, elec_temp, c("country", "year"))
 elec_temp <- left_join(elec_temp, owid_elec, by = c("country", "year"))
 rm(owid_elec)
-#write.xlsx(elec_temp, here("data/temp/elec_edgar_owid_all.xlsx"))
+
 ```
 
 # IEA Emissions allocation to electricity and heat
-```{r}
+Full title: International Energy Agency Greenhouse Gas Emissions from Energy, 1751-2020
+Accessed via UK Data Service
+Citation: International Energy Agency. (2021). International Energy Agency Greenhouse Gas Emissions from Energy, 1751-2020. [data collection]. 13th Edition. UK Data Service. SN: 5181, DOI: 10.5257/iea/co2/2021
 
-#elec_temp <- read_excel(here("data/temp/elec_edgar_owid_all.xlsx"))
+Description: The Greenhouse Gas Emissions from Energy dataset (formerly the CO2 Emissions from Energy dataset) contains annual Greenhouse Gas emissions from fuel combustion and related indicators for a large selection of countries plus regional aggregates. Emissions were calculated using IEA energy databases and the default methods and emission factors given in the 2006 GLs for National Greenhouse Gas Inventories.
+
+Sector choice: "Electricity and heat production"
+
+elec_heat_emissions_ktco2: Expressed in thousand tonnes of CO2.
+This allocation type shows emissions for the same sectors which
+are present in the file CO2 Emissions From Fuel Combustion. In
+particular, the emissions from electricity and heat production are
+shown separately and not reallocated.
+
+elec_heat_emissions_kgco2_pc: These ratios are expressed in kilogrammes of CO2 per capita.
+This allocation type shows per capita emissions for the same
+sectors which are present in the file CO2 Emissions From Fuel
+Combustion. In particular, the emissions from electricity and heat
+production are shown separately and not reallocated.
+
+```{r}
 
 iea_elec <- read_excel(here("data/raw/IEA_emissions_electricity_heat_full.xlsx"), range = cell_rows(4:5943), 
            col_names = c("country", "year", "none", "elec_heat_emissions_ktco2", "elec_heat_emissions_kgco2_pc")) %>%
@@ -368,13 +401,18 @@ test_diff(iea_elec, elec_temp, c("country", "year"))
 
 elec_temp <- left_join(elec_temp, iea_elec, by = c("country", "year"))
 rm(iea_elec)
-#write.xlsx(elec_temp, here("data", "out", "elec_temp_iea.xlsx"))
 
 ```
 
-# Population statistics
+# Population and GDP controls
+Sourced from the World Bank.
+
+Population: https://data.worldbank.org/indicator/SP.POP.TOTL
+GDP (current US$): https://data.worldbank.org/indicator/NY.GDP.MKTP.CD
+GDP per capita (current US$): https://data.worldbank.org/indicator/NY.GDP.PCAP.CD
+
+
 ```{r}
-#iea_elec <- read_excel(here("data", "out", "elec_temp_iea.xlsx"))
 
 pop_stats <- read.csv(here("data/raw/WB_pop_stats.csv"), nrows = 9114) %>% select(1,3,5) %>% 
   rename(year = Time, country = Country.Name, population_wb = `Population..total..SP.POP.TOTL.`) %>% 
@@ -398,7 +436,24 @@ rm(elec_temp)
 ```
 
 # OECD Emissions by Sector
-Tonnes of CO2 equivalent, Thousands
+
+This dataset presents trends in man-made emissions of major greenhouse gases and emissions by gas.
+
+Data refer to total emissions of CO2 (emissions from energy use and industrial processes, e.g. cement production), CH4 (methane emissions from solid waste, livestock, mining of hard coal and lignite, rice paddies, agriculture and leaks from natural gas pipelines), nitrous oxide (N2O), hydrofluorocarbons (HFCs), perfluorocarbons (PFCs), sulphur hexafluoride (SF6) and nitrogen trifluoride (NF3). Data exclude indirect CO2.
+
+Concerning Global Warming Potentials (GWP) when converting the data from tonnes to CO2 equivalents for Annex I countries these calculations were based on defaults from Assessment Report 4 (AR4). As regards the non-Annex I countries the factors from the following reports were used: Costa Rica, Israel, Korea, Peru - Second Assessment Report, Chile - AR4 and for Colombia, Mexico - AR5.
+
+Data source(s) used:
+National Inventory Submissions 2022  to the United Nations Framework Convention on Climate Change (UNFCCC, CRF tables), and replies to the OECD State of the Environment Questionnaire.
+
+Indicators (all measured in Tonnes of CO2 equivalent, Thousands):
+tot_emissions_excl_lulucf: Total emissions excluding LULUCF
+tot_emissions_incl_lulucf: Total emissions including LULUCF
+emissions_energy_total (1): Emissions from "Energy" (SUM: Energy industries, Manufacturing Industries and Construction, Transport, Residential and Other Sectors, Energy Other, Fugtiive Emissions from Fuels, CO2 from transport and storage)
+emissions_elec (1A1): Emissions from Energy Industries
+emissions_residential (1A4): Emissions from Energy in Residential and Other Sectors
+emissions_energy_other (1A5): Emissions from "Other" Energy
+
 ```{r}
 oecd_elec <- read_xlsx(here("data/raw/OECD_GHG_total_emissions_by sector.xlsx"), range = cell_rows(3:1629)) %>% 
     clean_names() %>% 
@@ -417,7 +472,7 @@ test_diff(oecd_elec, full, c("country", "year"))
 
 OECD_vec <- OECD
 data_oecd <- left_join(full, oecd_elec, by = c("country", "year")) %>% 
-  select(-c(pop, population, gdp)) %>% 
+  select(-c(population, gdp)) %>% 
   mutate(EU = ifelse(country %in% EU31,1,0),
          OECD = ifelse(country %in% OECD_vec,1,0)) 
 
@@ -428,6 +483,16 @@ rm(full)
 ```
 
 #EDGAR v7.0
+Released 2022
+
+Description: Timeseries of fossil CO2 from 1970 till 2021 for all world countries with sector-specific break-down. CO2 LULUCF emissions from 1990 to 2021 by macro-regions. The Emissions Database for Global Atmospheric Research (EDGAR) provides independent estimates of the global anthropogenic emissions and emission trends, based on publicly available statistics, for the atmospheric modeling community as well as for policy makers. This scientific independent emission inventory is characterized by a coherent world historical trend from 1970 to year x-3, including emissions of all greenhouse gases, air pollutants and aerosols.
+
+https://data.jrc.ec.europa.eu/dataset/e0344cc3-e553-4dd4-ac4c-f569c8859e19
+
+Indicators:
+edgar_power_emissions: emissions from power industry
+Verified: Largely identical to V6.0 EDGAR indicator chosen above apart from a few (likely) improvements in data coverage.
+
 ```{r}
 edgar_v7 <- read_xlsx(here("data/raw/EDGARv7.0_FT2021_fossil_CO2_booklet2022.xlsx"), sheet = "fossil_CO2_by_sector_and_countr") %>% 
   rename(country = Country) %>% 
@@ -438,19 +503,43 @@ edgar_v7 <- read_xlsx(here("data/raw/EDGARv7.0_FT2021_fossil_CO2_booklet2022.xls
 
 test_diff(edgar_v7, data_oecd, c("country", "year"))
 
-datav7 <- left_join(data_oecd, edgar_v7, by = c("country", "year"))
+datav7 <- left_join(data_oecd, edgar_v7, by = c("country", "year")) %>% 
+  rename(gdp = wb_gdp, 
+                  gdp_pc = wb_gdppc, 
+                  pop = population_wb, 
+                  bp_energy_mtco2 = co2_combust_mtco2,
+                  edgar_v6_elec_ktco2 = edgar_elec_emissions,
+                  owid_1_elec_heat_tco2e = owid_elec_emissions, 
+                  owid_2_elec_mtco2e = greenhouse_gas_emissions,
+                  edgar_v7_elec_ktco2 = edgar_power_emissions, 
+                  iea_elec_heat_ktco2 = elec_heat_emissions_ktco2,
+                  oecd_ktco2e = emissions_elec) %>% 
+  relocate(country, year, gdp, gdp_pc, pop, EU, OECD,
+                  edgar_v6_elec_ktco2,
+                  edgar_v7_elec_ktco2, 
+                  owid_1_elec_heat_tco2e, 
+                  owid_2_elec_mtco2e,
+                  bp_energy_mtco2,
+                  iea_elec_heat_ktco2,
+                  oecd_ktco2e)
 
+readRDS(here("data/out/elec_emissions_panel_clean_22.RDS")) %>% identical(datav7)
 #saveRDS(datav7, here("data/out/elec_emissions_panel_clean_22.RDS"))
 
-tester <- readRDS(here("data/out/elec_emissions_panel_clean.RDS"))
-identical(tester, data_oecd)
-identical(tester, datav7[1:99])
 rm(data_oecd)
 rm(datav7)
 rm(edgar_v7)
-rm(tester)
-#organise variables in a nice order
-is.pbalanced(tester)
+
+```
+
+# Variable Documentation
+```{r, eval = FALSE, include = FALSE}
+
+vars <- read_xlsx(here("data/out/Variable_Documentation.xlsx"))
+
+#write.xlsx(vars, here("data/out/Variable_Documentation.xlsx"))
+# identical(vars$Name, names(data))
+# vars[match(names(data), vars$Name),]  %>% identical(vars)
 
 ```
 
