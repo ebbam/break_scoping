@@ -21,46 +21,7 @@ conflict_prefer_all("dplyr", quiet = TRUE)
 # Data and Plotting functions
 source(here("code/dicts.R"))
 regions <- read.xlsx(here("data/out/regions.xlsx"))
-data <- readRDS(here("data/out/elec_emissions_panel_clean.RDS"))
-
-gen_country <- function(df){
-  country_p <- df %>% 
-    pivot_longer(cols = !c(country, year), values_drop_na = TRUE) %>% 
-    filter(value > 0)  %>% 
-    group_by(name, year) %>% 
-    summarise(obs = n(), n_OECD = sum(country %in% union(EU31, OECD))) %>% 
-    ggplot(., aes(x = year)) + 
-    geom_col(aes(y = obs, fill = "blue")) +
-    geom_col(aes(y = n_OECD, fill = "green")) +
-    geom_hline(yintercept = 43, linetype = "dashed") +
-    facet_wrap(~name) +
-    theme(legend.position = "none")
-  return(country_p)
-}
-  
-gen_year <- function(df){
-  year_p <- df %>% 
-    pivot_longer(cols = !c(country, year), values_drop_na = TRUE) %>% 
-  filter(value > 0)  %>% 
-  group_by(name) %>% 
-  summarise(start = as.numeric(min(year)), end = as.numeric(max(year))) %>% 
-  ggplot() +
-    aes(y = name) +
-    geom_segment(aes(x = start, 
-                     xend = end,
-                     yend = name,
-                     color = name), 
-                 size = 5,
-                 show.legend = FALSE) +
-  geom_text(aes(x = start, label = start), 
-              nudge_x = 0,
-              size = 3) +
-    geom_text(aes(x = end, label = end), 
-              nudge_x = 0,
-              size = 3)
-  return(year_p)
-}
-
+data <- readRDS(here("data/out/elec_emissions_panel_clean_22.RDS"))
 
 
 ```
