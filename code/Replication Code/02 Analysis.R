@@ -2,7 +2,7 @@
 
 set.seed(1230) 
 
-ltitle="Results_CO2Drivers_Analysis.txt"
+ltitle="code/Replication Code/Results_CO2Drivers_Analysis_correct.txt"
 
 
 # Prepare Data
@@ -68,7 +68,7 @@ for(group in 1:2){
       "############################## \n",
       "\n \n "),
     file = ltitle,
-    append = T
+    append = TRUE
   )
   
   for(p.value in c(.05, .01, .001)){
@@ -77,16 +77,16 @@ for(group in 1:2){
     is <- isatpanel(
       data = dat,
       formula = ifelse(
-        group == 1, "ltransport.emissions_pc ~ lgdp + lgdp_sq + lpop",
+        group == 1, "ltransport.emissions ~ lgdp + lgdp_sq + lpop",
         paste0(
-          "ltransport.emissions_pc ~ ", 
+          "ltransport.emissions ~ ", 
           paste(group.interactions, collapse = " + ")
         )
       ) %>% as.formula,
       index = c("country", "year"),
       effect = "twoways",
-      iis = T,
-      fesis = T, 
+      iis = TRUE,
+      fesis = TRUE, 
       t.pval=p.value
     )
     
@@ -97,14 +97,14 @@ for(group in 1:2){
         " \n # p-value: ", p.value,
         " \n \n "), 
       file = ltitle, 
-      append = T)
+      append = TRUE)
     
-    sink(ltitle, append=T)
+    sink(ltitle, append=TRUE)
     print(is)
     sink()
     
     cat(" \n \n \n \n \n", 
         file = ltitle, 
-        append = T)
+        append = TRUE)
   }
 }
