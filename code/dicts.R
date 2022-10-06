@@ -68,3 +68,19 @@ gen_year <- function(df){
               size = 3)
   return(year_p)
 }
+
+
+# Functions for results overview
+get_model <- function(ct_sample, yr_range, p.val, l_iis, b_sz){
+  m <- models %>% filter(country_sample == ct_sample & 
+                           year_range == yr_range & 
+                           p_val == p.val & 
+                           iis == l_iis & 
+                           b_size == b_sz)
+  mod <- m %>% pull(is) %>% first()
+  p <- mod %>% plot(zero_line = FALSE)
+  p_grid <- mod %>% plot_grid
+  mt <- m$main_title
+  st <- m$sub_title
+  return(list(results = mod, plot = p, plot_grid = p_grid, main_title = mt, sub_title = st))
+}
