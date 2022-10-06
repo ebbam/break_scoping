@@ -6,9 +6,11 @@ output: html_document
 ---
 
 # Load libraries
+
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 
+rm(list = ls())
 library(data.table)
 library(tidyverse)
 library(openxlsx)
@@ -17,7 +19,7 @@ library(gets)
 library(getspanel)
 library(here)
 library(doParallel)
-
+# 
 # install.packages(
 #   "https://github.com/gsucarrat/gets/raw/master/gets_devel.tar.gz",
 #   repos = NULL, type = "source"
@@ -30,24 +32,27 @@ data <- readRDS(here("data/out/elec_emissions_panel_clean_22.RDS"))
 ```
 
 # Create controls and scale emissions (ktco2/ktco2e)
+
 ```{r}
 
 data <- data %>% 
   mutate(gdp_sq = gdp^2,
           lpop = log(pop),
           lgdp = log(gdp),
-          lgdp_sq = log(gdp_sq),
+          lgdp_sq = log(gdp)^2,
          edgar_v7_elec_ktco2 = edgar_v7_elec_mtco2*1000,
+         l_edgar_v7 = log(edgar_v7_elec_ktco2),
          owid_1_elec_heat_ktco2e = owid_1_elec_heat_tco2e/1000,
          owid_2_elec_ktco2e = owid_2_elec_mtco2e*1000,
          bp_energy_ktco2 = bp_energy_mtco2*1000)
 
 ```
 
-
 # Reproducible loop testing EDGAR V7.0
+
 dependent variable: edgar_v7_elec_ktco2
-```{r}
+
+```{r, eval = FALSE}
 tot <- unique(c(EU31, OECD))
 dat <- data %>% 
   filter(country %in% tot & year >= 2000) %>%
@@ -90,12 +95,12 @@ for(p.value in c(.05, .01, .001)){
 
 ```
 
-
 # Simple loop
+
 ```{r}
 
 # Vector of different emissions data sources
-dep_vars = c('edgar_v7_elec_ktco2', 
+dep_vars = c('l_edgar_v7', 
     'edgar_v7_elec_ktco2',
     'owid_1_elec_heat_ktco2e',
     'owid_2_elec_ktco2e',
@@ -108,9 +113,9 @@ groups <- list('all' = unique(data$country),
                  'EU15' = EU15,
                  'EU31' = EU31,
                  'OECD' = OECD,
-                 #'OECD_plus' = c(OECD)
-                 'BRICS' = c("Brazil", "Russia", "India", "China", "South Africa")
-                 #,
+                 #'OECD_plus' = c(OECD, )
+                 'BRICS' = c("Brazil", "Russia", "India", "China", "South Africa"),
+                'Other' = c("Nigeria", "Bangladesh", "Indonesia", "Vietnam", "Thailand", "Egypt", "Saudi Arabia", "United Arab Emirates")
                  #'BRICS_plus' = c(BRICS, ),
                  #'Africa_min' = ,
                  #'South_America_min' = ,
@@ -122,35 +127,41 @@ yr_mins <- c(1990, 2000)
 run_simple <- function(country_sample, yr_min, p.value){
     dat <- data %>% 
     filter(country %in% country_sample & year >= yr_min) %>%
-    select(country, year, dep_vars[1], lgdp, lpop, lgdp_sq) %>% as.data.frame()
+    select(country, year, l_edgar_v7, lgdp, lpop, lgdp_sq) %>% as.data.frame()
         is <- isatpanel(
             data = dat,
-            formula = as.formula(paste0(dep_vars[[1]], "~ lgdp + lpop + lgdp_sq")),
+            formula = l_edgar_v7 ~ lgdp + lpop + lgdp_sq,
             index = c("country", "year"),
             effect = "twoways",
             iis = TRUE,
             fesis = TRUE,
-            t.pval = p.value
+            t.pval = p.value,
+            max.block.size = 20
             )
         return(is) }
 
 # Example
-test <- run_simple(EU15, 2000, 0.001)
+test <- run_simple(EU15, 1990, 0.001)
+#saveRDS(test, here('output/test.RDS'))
 
-#models2 <- readRDS("output/edgar_v7_models1.RDS")
+#test <- readRDS(here('output/test.RDS'))
 
 ```
 
-
 # Parallel
-```{r}
 
-cl <- makeCluster(4)
+Saved as "output/edgar_v7_models.RDS"
+
+```{r, eval = FALSE}
+
+cl <- makeCluster(6)
 registerDoParallel(cl)
 
 tot_models <- foreach (k = 2:5, .combine=rbind, .packages = c('tidyverse', 'getspanel')) %:%
     foreach(y = yr_mins, .combine = rbind) %:%
-    foreach(p.value = c(.05, 0.01, 0.001), .combine = rbind) %dopar% {
+    foreach(i = c(TRUE, FALSE), .combine = rbind) %:%
+    foreach(b = c(20, 30), .combine = rbind) %:%
+    foreach(p.value = c(0.05, 0.01, 0.001), .combine = rbind) %dopar% {
     dat <- data %>% 
     filter(country %in% groups[[k]] & year >= y) %>%
     select(country, year, dep_vars[1], lgdp, lpop, lgdp_sq) %>% as.data.frame()
@@ -159,52 +170,80 @@ tot_models <- foreach (k = 2:5, .combine=rbind, .packages = c('tidyverse', 'gets
             formula = as.formula(paste0(dep_vars[[1]], "~ lgdp + lpop + lgdp_sq")),
             index = c("country", "year"),
             effect = "twoways",
-            iis = TRUE,
+            iis = i,
             fesis = TRUE,
-            t.pval = p.value
+            t.pval = p.value,
+            max.block.size = b
             )
           models = tibble(source = dep_vars[1], 
                                        country_sample = names(groups[k]), 
                                        year_range = paste0(min(dat$year),":",max(dat$year)), 
                                        p_val = p.value, 
-                                       is = list(is))
+                                       is = list(is),
+                          iis = i,
+                          b_size = b)
     }
 
-#saveRDS(tot_models, here("output/edgar_v7_models.RDS"))
+#saveRDS(models, here("output/edgar_v7_models_all.RDS"))
 
 ```
 
+# Extracting results and plots for one specification
 
 ```{r}
-tot_models <- readRDS(here("output/edgar_v7_models.RDS"))
-tot_models$is[[1]] %>% plot
 
-```
-
-
-# Extracting plots
-```{r}
+models <- readRDS(here("output/edgar_v7_models_all.RDS"))
 
 # functioning plot extractor
-get_model <- function(source, country_sample, year_min, p.val){
-  mod <- models$is[[models$source == source & 
-               models$country_sample == country_sample & 
-               substr(models$year_range,1,4) == as.character(year_min) &
-               models$p_val ==  p.val]]
-  return(mod)
+# get_model <- function(country_sample, year_range, p.val, l_iis, b_size){
+#   mod <- models$is[models$country_sample == country_sample & 
+#                      models$year_range == year_range & 
+#                      models$p_val == p.val & 
+#                      models$iis == l_iis & 
+#                      models$b_size == b_size]
+#   p <- mod %>% lapply(function(x) plot(x, zero_line = FALSE))
+#   p_grid <- mod %>% lapply(plot_grid)
+#   return(list(results = mod, plot = p, plot_grid = p_grid))
+# }
+
+get_model <- function(ct_sample, yr_range, p.val, l_iis, b_sz){
+ m <- models %>% filter(country_sample == ct_sample & 
+                     year_range == yr_range & 
+                     p_val == p.val & 
+                     iis == l_iis & 
+                     b_size == b_sz)
+  mod <- m %>% pull(is) %>% first()
+  p <- mod %>% plot(zero_line = FALSE)
+  p_grid <- mod %>% plot_grid
+  mt <- m$main_title
+  st <- m$sub_title
+  return(list(results = mod, plot = p, plot_grid = p_grid, main_title = mt, sub_title = st))
 }
+
+# Examples:
+te <- get_model('EU15', "1990:2021", 0.001, TRUE, 20)
+te$main_title
+te$plot
+te$plot_grid
+te$sub_title
+
+```
+
+# Scratch
+
+```{r}
+
+
+
+tot_models$is[1]
+tot_models$is[[1]] %>% typeof()
+tot_models$is[[1]] %>% class()
+
+# Freezes with plot and plot_grid
+te %>% lapply(plot_grid)
 
 get_model(source = "edgar_v7_elect_ktco2", country_sample = "EU15", year_min = 1990, p.val = 0.001)
 models$is[models$source == "edgar_v7_elec_ktco2" & models$country_sample == "EU15" & models$year_range == "1990:2021" & models$p_val == 0.001]
-
 models %>% filter(models$source == "edgar_v7_elec_ktco2" & models$country_sample == "EU15" & models$year_range == "1990:2021", p_val== 0.05) %>% View()
 
-tot_models$is[1] %>% typeof()
-
-models2$is[[1]]
-models$is[[source == "edgar_v7_elec_ktco2"]] %>% plot_grid
-
-
 ```
-
-
