@@ -1,0 +1,157 @@
+---
+title: "Results_Overview"
+output: pdf_document
+header-includes: 
+ \usepackage{geometry}
+ \geometry{top=0.75in,left=1.5in,bottom=0.75in,right=0.80in}
+classoption: landscape, a3paper
+---
+
+## Progress Update:
+
+-   96 models run (so far):
+
+    -   4 x country groups (EU15, EU31, OECD, BRICS)
+
+    -   2 x T: 1990-2021; 2000-2021
+
+    -   3 x p-values: 0.001, 0.01, 0.05
+
+    -   2 x Block Size: (20, 30)
+
+    -   2 x IIS: (TRUE, FALSE)
+
+    -   1 x data source: EU JRC EDGAR v7.0
+
+-   Issues encountered:
+
+    -   We encountered a few countries that were poorly fit
+    -   Certain countries are modeled with many consecutive impulses (when impulse indicator saturation is performed) ie. Norway, Luxembourg, Costa Rica
+
+-   Questions for the group:
+
+    -   How best to proceed (ie. cutting down some specification options (as listed above))?
+
+```{r setup, include=FALSE}
+# my_plot_hook <- function(x, options)
+#   paste("\n", knitr::hook_plot_tex(x, options), "\n")
+# knitr::knit_hooks$set(plot = my_plot_hook)
+knitr::opts_chunk$set(echo = TRUE)
+
+library(data.table)
+library(tidyverse)
+library(openxlsx)
+library(gets)
+library(getspanel)
+library(here)
+library(doParallel)
+
+source(here("code/dicts.R"))
+models <- readRDS(here("output/edgar_v7_models_all.RDS"))
+
+```
+
+```{r, include = FALSE}
+
+gen_plots <- function(ct_sample, yr_range) { #for(y in c("1990:2021", "2000:2021")){
+  for(p in c(0.01, 0.001))
+    for(l in c(TRUE, FALSE)){
+      for(b in c(30,20)){
+      pl <- get_model(ct_sample, yr_range, p, l, b)
+      print(pl$plot +
+        ggtitle(label = pl$main_title, subtitle = pl$sub_title))
+      print(pl$plot_grid +
+        ggtitle(label = pl$main_title, subtitle = pl$sub_title))
+      cat("\n")
+    }
+  }
+}
+#}
+
+```
+
+# EU15: 2000-2021
+
+```{r, fig.height = 5, fig.width = 7, echo = FALSE}
+
+gen_plots('EU15', "2000:2021")
+
+```
+
+\newpage
+
+# EU15: 1990-2021
+
+```{r, fig.height = 5, fig.width = 7, echo = FALSE}
+
+gen_plots('EU15', "1990:2021")
+
+```
+
+\newpage
+
+# EU31: 2000-2021
+
+. . .
+
+```{r, fig.height = 7, fig.width = 7, echo = FALSE}
+
+gen_plots('EU31', "2000:2021")
+
+```
+
+\newpage
+
+# EU31: 1990-2021
+
+. . .
+
+```{r, fig.height = 7, fig.width = 7, echo = FALSE}
+
+gen_plots('EU31', "1990:2021")
+
+```
+
+\newpage
+
+# OECD: 2000-2021
+
+. . .
+
+```{r, fig.height = 7, fig.width = 7.5, echo = FALSE}
+
+gen_plots('OECD', "2000:2021")
+
+```
+
+\newpage
+
+# OECD: 1990-2021
+
+. . .
+
+```{r, fig.height = 7, fig.width = 7.5, echo = FALSE}
+
+gen_plots('OECD', "1990:2021")
+
+```
+
+\newpage
+
+# BRICS: 2000-2021
+
+```{r, fig.height = 5, fig.width = 7, echo = FALSE}
+
+gen_plots('BRICS', "2000:2021")
+
+```
+
+\newpage
+
+# BRICS: 1990-2021
+
+```{r, fig.height = 5, fig.width = 7, echo = FALSE}
+
+gen_plots('BRICS', "1990:2021")
+
+```
