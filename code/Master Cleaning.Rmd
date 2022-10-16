@@ -526,10 +526,9 @@ datav7 <- left_join(data_oecd, edgar_v7, by = c("country", "year")) %>%
                   iea_elec_heat_ktco2,
                   oecd_ktco2e)
 
-readRDS(here("data/out/elec_emissions_panel_clean_22.RDS"))  %>% 
-  all.equal(datav7)
 
-#saveRDS(datav7, here("data/out/elec_emissions_panel_clean_22.RDS"))
+
+#saveRDS(data, here("data/out/elec_emissions_panel_clean_22.RDS"))
 
 # rm(data_oecd)
 # rm(datav7)
@@ -537,13 +536,54 @@ readRDS(here("data/out/elec_emissions_panel_clean_22.RDS"))  %>%
 
 ```
 
+# Weather indicators
+
+```{r}
+#data <- readRDS(here("data/out/elec_emissions_panel_clean_22.RDS"))
+
+hdd <- read.csv(here("data/raw/IEA-CMCC-WeatherForEnergy-HDD16dailybypop-from-2000-to-2022.csv")) %>% 
+  select(Territory, Date, HDD16dailybypop) %>% 
+  rename(country = Territory, year = Date)
+
+cdd <- read.csv(here("data/raw/IEA-CMCC-WeatherForEnergy-CDD18dailybypop-from-2000-to-2022.csv")) %>% 
+  select(Territory, Date, CDD18dailybypop) %>% 
+  rename(country = Territory, year = Date)
+
+test_diff(hdd, cdd, c("country", "year"))
+
+temp_dat <- left_join(hdd, cdd, by = c("country", "year")) %>% 
+   mutate(country = ifelse(country %in% names(getcountry), unname(getcountry[country]), country))
+  
+test_diff(temp_dat, datav7, c("country", "year"))
+rm(hdd, cdd)
+data <- left_join(datav7, temp_dat, by = c('country', 'year'))
+
+cdd <- read.xlsx(here("data/raw/nrg_chdd_a_spreadsheet.xlsx"), sheet = "CDD", rows = 9:39) %>% 
+  pivot_longer(!TIME, names_to = 'year', values_to = 'CDD') %>% 
+  rename(country = TIME) %>% 
+  mutate(country = ifelse(country == "Germany (until 1990 former territory of the FRG)", "Germany", ifelse(country %in% names(getcountry), unname(getcountry[country]), country)), year = as.numeric(year))
+
+hdd <- read.xlsx(here("data/raw/nrg_chdd_a_spreadsheet.xlsx"), sheet = "HDD", rows = 9:39) %>%
+  pivot_longer(!TIME, names_to = 'year', values_to = 'HDD') %>% 
+  rename(country = TIME) %>% 
+    mutate(country = ifelse(country == "Germany (until 1990 former territory of the FRG)", "Germany", ifelse(country %in% names(getcountry), unname(getcountry[country]), country)), year = as.numeric(year))
+
+data <- full_join(cdd, hdd, by = c("country", "year")) %>% 
+  left_join(data, ., by = c("country", "year"))
+
+readRDS(here("data/out/elec_emissions_panel_clean_22.RDS")) %>% 
+ all.equal(data)
+
+```
+
+
 # Variable Documentation
 ```{r, eval = FALSE, include = FALSE}
 
 vars <- read_xlsx(here("data/out/Variable_Documentation.xlsx"))
 
 #write.xlsx(vars, here("data/out/Variable_Documentation.xlsx"))
-# identical(vars$Name, names(data))
+all.equal(vars$Name, names(data))
 # vars[match(names(data), vars$Name),]  %>% identical(vars)
 
 ```
