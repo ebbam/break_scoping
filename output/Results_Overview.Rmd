@@ -1,36 +1,13 @@
 ---
 title: "Results_Overview"
-output: pdf_document
-header-includes: 
- \usepackage{geometry}
- \geometry{top=0.75in,left=1.5in,bottom=0.75in,right=0.80in}
-classoption: landscape, a3paper
+output:
+  pdf_document: default
+  html_document: default
 ---
 
 ## Progress Update:
 
--   96 models run (so far):
-
-    -   4 x country groups (EU15, EU31, OECD, BRICS)
-
-    -   2 x T: 1990-2021; 2000-2021
-
-    -   3 x p-values: 0.001, 0.01, 0.05
-
-    -   2 x Block Size: (20, 30)
-
-    -   2 x IIS: (TRUE, FALSE)
-
-    -   1 x data source: EU JRC EDGAR v7.0
-
--   Issues encountered:
-
-    -   We encountered a few countries that were poorly fit
-    -   Certain countries are modeled with many consecutive impulses (when impulse indicator saturation is performed) ie. Norway, Luxembourg, Costa Rica
-
--   Questions for the group:
-
-    -   How best to proceed (ie. cutting down some specification options (as listed above))?
+[To be filled in]
 
 ```{r setup, include=FALSE}
 # my_plot_hook <- function(x, options)
@@ -47,9 +24,22 @@ library(here)
 library(doParallel)
 
 source(here("code/dicts.R"))
-models <- readRDS(here("output/edgar_v7_models_all.RDS"))
+models <- readRDS(here("output/edgar_v7_models_all.RDS")) %>% 
+  rbind(readRDS(here("output/edgar_v7_EU15_plus.RDS")))
+
+for_models <- readRDS(here("output/edgar_v7_EU15_plus_formulas.RDS")) %>% arrange(p_val) %>% 
+  mutate(controls = case_when(grepl("~ lgdp + lpop + lgdp_sq + HDD16dailybypop + CDD18dailybypop", source, fixed = TRUE) ~ "w/ Temp Controls",
+                          grepl("~ lpop + HDD16dailybypop + CDD18dailybypop", source, fixed = TRUE) ~ "Temp & Pop Only",
+                          TRUE ~ "Standard Controls"),
+                        func = case_when(grepl("^l_edgar_v7", source) ~ "Levels",
+                        grepl("^d.l_edgar_v7", source) ~ "First-diffs",
+                        grepl("^g.l_edgar_v7", source) ~ "Growth rates"))
 
 ```
+
+## Various country groupes {.tabset .tabset-fade .tabset-pills}
+
+### groupby {.tabset .tabset-fade .tabset-pills}
 
 ```{r, include = FALSE}
 
@@ -70,88 +60,90 @@ gen_plots <- function(ct_sample, yr_range) { #for(y in c("1990:2021", "2000:2021
 
 ```
 
-# EU15: 2000-2021
+### EU15: 2000-2021
 
-```{r, fig.height = 5, fig.width = 7, echo = FALSE}
+```{r, fig.height = 5, fig.width = 7, eval = FALSE, echo = FALSE, cache = TRUE}
 
 gen_plots('EU15', "2000:2021")
 
 ```
 
-\newpage
+### EU15: 1990-2021
 
-# EU15: 1990-2021
-
-```{r, fig.height = 5, fig.width = 7, echo = FALSE}
+```{r, fig.height = 5, fig.width = 7, eval = FALSE, echo = FALSE, cache = TRUE}
 
 gen_plots('EU15', "1990:2021")
 
 ```
 
-\newpage
 
-# EU31: 2000-2021
+### EU31: 2000-2021
 
 . . .
 
-```{r, fig.height = 7, fig.width = 7, echo = FALSE}
+```{r, fig.height = 7, fig.width = 7,eval = FALSE, include = FALSE, cache = TRUE}
 
 gen_plots('EU31', "2000:2021")
 
 ```
 
-\newpage
 
-# EU31: 1990-2021
+
+### EU31: 1990-2021
 
 . . .
 
-```{r, fig.height = 7, fig.width = 7, echo = FALSE}
+```{r, fig.height = 7, fig.width = 7, echo = FALSE, eval = FALSE, cache = TRUE}
 
 gen_plots('EU31', "1990:2021")
 
 ```
 
-\newpage
 
-# OECD: 2000-2021
+### OECD: 2000-2021
 
 . . .
 
-```{r, fig.height = 7, fig.width = 7.5, echo = FALSE}
+```{r, fig.height = 7, fig.width = 7.5, echo = FALSE, eval = FALSE , cache = TRUE}
 
 gen_plots('OECD', "2000:2021")
 
 ```
 
-\newpage
 
-# OECD: 1990-2021
+### OECD: 1990-2021
 
 . . .
 
-```{r, fig.height = 7, fig.width = 7.5, echo = FALSE}
+```{r, fig.height = 7, fig.width = 7.5, echo = FALSE, eval = FALSE, cache = TRUE}
 
 gen_plots('OECD', "1990:2021")
 
 ```
 
-\newpage
 
-# BRICS: 2000-2021
+### BRICS: 2000-2021
 
-```{r, fig.height = 5, fig.width = 7, echo = FALSE}
+```{r, fig.height = 5, fig.width = 7, echo = FALSE, eval = FALSE, cache = TRUE}
 
 gen_plots('BRICS', "2000:2021")
 
 ```
 
-\newpage
+## Various country groupes {.tabset .tabset-fade .tabset-pills}
 
-# BRICS: 1990-2021
+### Selected  EU15+ US, Canada, New Zealand, Australia, Switzerland, Japan
 
-```{r, fig.height = 5, fig.width = 7, echo = FALSE}
+```{r, echo = FALSE, cache = TRUE}
 
-gen_plots('BRICS', "1990:2021")
+gen_plots('EU15+selected', "2000:2021")
+
+```
+
+### Selected  EU15+ US, Canada, New Zealand, Australia, Switzerland, Japan
+
+```{r, echo = FALSE,  cache = TRUE}
+
+gen_plots('EU15+selected', "1990:2021")
 
 ```
