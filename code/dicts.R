@@ -85,29 +85,4 @@ get_model <- function(ct_sample, yr_range, p.val, l_iis, b_sz){
   return(list(results = mod, plot = p, plot_grid = p_grid, main_title = mt, sub_title = st))
 }
 
-###############################################################################
-# Necessary vectors for code runs
 
-# Vector of different emissions data sources
-dep_vars = c('l_edgar_v7', 
-             'edgar_v7_elec_ktco2',
-             'owid_1_elec_heat_ktco2e',
-             'owid_2_elec_ktco2e',
-             'bp_energy_ktco2',
-             'iea_elec_heat_ktco2',
-             'oecd_ktco2e')
-
-# Vector of country samples (EU, OECD, OECD+, BRICS, Other)
-groups <- list('all' = unique(data$country),
-               'EU15' = EU15,
-               'EU31' = EU31,
-               'OECD' = OECD,
-               #'OECD_plus' = c(OECD, )
-               'BRICS' = c("Brazil", "Russia", "India", "China", "South Africa"),
-               'Other' = c("Nigeria", "Bangladesh", "Indonesia", "Vietnam", "Thailand", "Egypt", "Saudi Arabia", "United Arab Emirates")
-               #'BRICS_plus' = c(BRICS, ),
-               #'Africa_min' = ,
-               #'South_America_min' = ,
-)
-
-yr_mins <- c(1990, 2000)

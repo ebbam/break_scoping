@@ -1,5 +1,5 @@
 ---
-title: "Replication"
+title: "Analysis"
 author: "Ebba Mark"
 date: "`r Sys.Date()`"
 output: html_document
@@ -19,11 +19,14 @@ library(gets)
 library(getspanel)
 library(here)
 library(doParallel)
+library(fastDummies)
 # 
 # install.packages(
 #   "https://github.com/gsucarrat/gets/raw/master/gets_devel.tar.gz",
 #   repos = NULL, type = "source"
 # )
+
+# devtools::install_github("moritzpschwarz/getspanel")
 
 source(here("code/dicts.R"))
 
@@ -31,7 +34,7 @@ data <- readRDS(here("data/out/elec_emissions_panel_clean_22.RDS"))
 
 ```
 
-# Create controls and scale emissions (ktco2/ktco2e)
+# Create controls, scale emissions (ktco2/ktco2e), other required transformations (FD, lags, growth rates)
 
 ```{r}
 
@@ -46,10 +49,22 @@ data <- data %>%
          owid_2_elec_ktco2e = owid_2_elec_mtco2e*1000,
          bp_energy_ktco2 = bp_energy_mtco2*1000)
 
+data <- data %>% group_by(country) %>%
+  # Lags (3), first-difference, growth rate of log emissions (EDGAR V7), lgdp, lpop, lgdp_sq
+  mutate(across(c(l_edgar_v7, lgdp, lpop, lgdp_sq), list(l1 = ~lag(.x, n = 1L),
+         l2 = ~lag(.x, n = 2L),
+         l3 = ~lag(.x, n = 3L), 
+         d = ~c(NA, diff(.x, differences = 1)),
+         g = ~(c(NA, diff(.x, differences = 1))/lag(.x, n = 1L))*100),
+         .names = "{.fn}.{.col}")) %>% 
+  mutate(EU_ETS_05 = ifelse(country %in% EU15 & year >= 2005, 1, 0),
+         EU_ETS_08 = ifelse(country %in% EU15 & year >= 2008, 1, 0),
+         EU_ETS_13 = ifelse(country %in% EU15 & year >= 2013, 1, 0))
+         
 ```
 
+## Test runs {.tabset}
 # Reproducible loop testing EDGAR V7.0
-
 dependent variable: edgar_v7_elec_ktco2
 
 ```{r, eval = FALSE}
@@ -99,49 +114,23 @@ for(p.value in c(.05, .01, .001)){
 
 ```{r}
 
-# Vector of different emissions data sources
-dep_vars = c('l_edgar_v7', 
-    'edgar_v7_elec_ktco2',
-    'owid_1_elec_heat_ktco2e',
-    'owid_2_elec_ktco2e',
-    'bp_energy_ktco2',
-    'iea_elec_heat_ktco2',
-    'oecd_ktco2e')
-
-# Vector of country samples (EU, OECD, OECD+, BRICS, Other)
-groups <- list('all' = unique(data$country),
-                 'EU15' = EU15,
-                 'EU31' = EU31,
-                 'OECD' = OECD,
-                 #'OECD_plus' = c(OECD, )
-                 'BRICS' = c("Brazil", "Russia", "India", "China", "South Africa"),
-                'Other' = c("Nigeria", "Bangladesh", "Indonesia", "Vietnam", "Thailand", "Egypt", "Saudi Arabia", "United Arab Emirates")
-                 #'BRICS_plus' = c(BRICS, ),
-                 #'Africa_min' = ,
-                 #'South_America_min' = ,
-                 )
-
-yr_mins <- c(1990, 2000)
-
-
-run_simple <- function(country_sample, yr_min, p.value){
+run_simple <- function(fs, country_sample, yr_min, p.value){
     dat <- data %>% 
-    filter(country %in% country_sample & year >= yr_min) %>%
-    select(country, year, l_edgar_v7, lgdp, lpop, lgdp_sq) %>% as.data.frame()
+    filter(country %in% country_sample & year >= yr_min)  %>% as.data.frame()
         is <- isatpanel(
             data = dat,
-            formula = l_edgar_v7 ~ lgdp + lpop + lgdp_sq,
+            formula = as.formula(fs),
             index = c("country", "year"),
             effect = "twoways",
             iis = TRUE,
             fesis = TRUE,
             t.pval = p.value,
-            max.block.size = 20
+            max.block.size = 20,
             )
         return(is) }
 
 # Example
-test <- run_simple(EU15, 1990, 0.001)
+test <- run_simple(EU15, 1990, 0.001, )
 #saveRDS(test, here('output/test.RDS'))
 
 #test <- readRDS(here('output/test.RDS'))
@@ -149,8 +138,35 @@ test <- run_simple(EU15, 1990, 0.001)
 ```
 
 # Parallel
-
+96 base models
 Saved as "output/edgar_v7_models.RDS"
+
+```{r}
+# Vector of different emissions data sources
+dep_vars = c('l_edgar_v7', 
+             'edgar_v7_elec_ktco2',
+             'owid_1_elec_heat_ktco2e',
+             'owid_2_elec_ktco2e',
+             'bp_energy_ktco2',
+             'iea_elec_heat_ktco2',
+             'oecd_ktco2e')
+
+# Vector of country samples (EU, OECD, OECD+, BRICS, Other)
+groups <- list('all' = unique(data$country),
+               'EU15' = EU15,
+               'EU31' = EU31,
+               'OECD' = OECD,
+               #'OECD_plus' = c(OECD, )
+               'BRICS' = c("Brazil", "Russia", "India", "China", "South Africa"),
+               'Other' = c("Nigeria", "Bangladesh", "Indonesia", "Vietnam", "Thailand", "Egypt", "Saudi Arabia", "United Arab Emirates")
+               #'BRICS_plus' = c(BRICS, ),
+               #'Africa_min' = ,
+               #'South_America_min' = ,
+)
+
+yr_mins <- c(1990, 2000)
+```
+
 
 ```{r, eval = FALSE}
 
@@ -229,21 +245,233 @@ te$sub_title
 
 ```
 
-# Scratch
+# Identified country group
+EU-15, US, Canada, NZ, Australia, Japan, Switzerland
+
+# AR version of original model specifications (only varying iis, p-value, block size, time horizon)
+```{r}
+
+# "sel" to be moved to dicts
+sel <- c(EU15, "United States", "Canada", "New Zealand", "Australia", "Japan", "Switzerland")
+
+cl <- makeCluster(4)
+registerDoParallel(cl)
+
+ar_models <- foreach(y = yr_mins, .combine = rbind, .packages = c('tidyverse', 'getspanel')) %:%
+    foreach(i = c(TRUE, FALSE), .combine = rbind) %:%
+    foreach(b = c(20, 30), .combine = rbind) %:%
+  foreach(a = c(0,1), .combine = rbind) %:%
+    foreach(p.value = c(0.05, 0.01, 0.001), .combine = rbind) %dopar% {
+    dat <- data %>% 
+    filter(country %in% sel & year >= y) %>%
+    select(country, year, dep_vars[1], lgdp, lpop, lgdp_sq) %>% as.data.frame()
+      is <- isatpanel(
+            data = dat,
+            formula = as.formula(paste0(dep_vars[[1]], "~ lgdp + lpop + lgdp_sq")),
+            ar = a,
+            index = c("country", "year"),
+            effect = "twoways",
+            iis = i,
+            fesis = TRUE,
+            t.pval = p.value,
+            max.block.size = b
+            )
+          models = tibble(source = dep_vars[1], 
+                                       country_sample = "EU15+selected", 
+                                       year_range = paste0(min(dat$year),":",max(dat$year)), 
+                                       p_val = p.value, 
+                                       is = list(is),
+                          iis = i,
+                          b_size = b,
+                          ar = a)
+    }
+
+tot_models <- ar_models %>% mutate(main_title = paste0(country_sample, ": ", substr(year_range,1,4),"-", substr(year_range,6,9)), sub_title = paste0("Specifications: p.value = ",p_val, "; iis = ", iis, "; block size = ", b_size))
+
+#saveRDS(tot_models, "output/edgar_v7_EU15_plus.RDS")
+#saveRDS(ar_models, "output/edgar_v7_EU15_plus_AR.RDS")
+
+# gen_plots('EU15+selected', "2000:2021")
+# 
+# for (i in 1:24){
+#   ar_models %>% 
+#     slice(i) %>% 
+#     pull(is) %>% 
+#     first() %>% 
+#     plot(title = paste(ar_models$country_sample[i], ar_models$year_range[i], "Specifications: p.value = ",ar_models$p_val[i], "; iis = ", ar_models$iis[i], "; block size = ", ar_models$b_size[i])) %>% print
+# }
+
+
+```
+
+# Testing functional forms
+Test on identified country group with:
+1% and .1% p-values
+iis = TRUE
+block size = 20
+
+
+```{r}
+form <- c(
+# Standard
+"l_edgar_v7 ~ lgdp + lpop + lgdp_sq",
+
+# AR : DONE PREVIOUS CHUNK
+
+# Integrating temperature controls
+"l_edgar_v7 ~ lgdp + lpop + lgdp_sq + HDD16dailybypop + CDD18dailybypop",
+
+# Controlling only for population and temperature (removing GDP)
+"l_edgar_v7 ~ lpop + HDD16dailybypop + CDD18dailybypop",
+
+# First-differences
+"d.l_edgar_v7 ~ d.lgdp + d.lpop + d.lgdp_sq",
+
+# Growth-rates
+"g.l_edgar_v7 ~ g.lgdp + g.lpop + g.lgdp_sq")
+
+cl <- makeCluster(6)
+registerDoParallel(cl)
+
+for_models <- foreach(f = form[-1], .combine = rbind, .packages = c('tidyverse', 'getspanel')) %:%
+  foreach(a = c(0,1), .combine = rbind) %:%
+    foreach(p.value = c(0.01, 0.001), .combine = rbind) %dopar% {
+    dat <- data %>% 
+    filter(country %in% sel & year >= 1990)
+      is <- isatpanel(
+            data = dat,
+            formula = as.formula(f),
+            index = c("country", "year"),
+            effect = "twoways",
+            iis = TRUE,
+            fesis = TRUE,
+            ar = a,
+            t.pval = p.value,
+            max.block.size = 20
+            )
+          models = tibble(source = f, 
+                                       country_sample = "EU15+selected", 
+                                       year_range = paste0(min(dat$year),":",max(dat$year)), 
+                                       p_val = p.value, 
+                                       is = list(is),
+                          iis = TRUE,
+                          b_size = 20,
+                          ar = a)
+    }
+
+saveRDS(for_models, here("output/edgar_v7_EU15_plus_formulas.RDS"))
+
+for(i in 1:16){
+  mt <- paste0(for_models$country_sample[i], " (", for_models$year_range[i],")")
+  st <- paste0("Formula: ", for_models$source[i])
+  pl <- for_models %>% 
+    slice(i) %>% 
+    pull(is) %>% 
+    first() %>% 
+    plot(zero_line = FALSE)
+  
+   print(pl +
+    ggtitle(label = mt, subtitle = st))
+  
+}
+
+
+```
+
 
 ```{r}
 
+# EU ETS dummies: 2008 and 2013 (2005 available but excluded)
+form_ets <- c(paste(form, "+ EU_ETS_08"), paste(form, " + EU_ETS_13"), paste(form, "+ EU_ETS_08 + EU_ETS_13"))
+              
+cl <- makeCluster(6)
+registerDoParallel(cl)
+
+ets_models <- foreach(f = form_ets, .combine = rbind, .packages = c('tidyverse', 'getspanel')) %:%
+  foreach(a = c(0,1), .combine = rbind) %:%
+    foreach(p.value = c(0.01, 0.001), .combine = rbind) %dopar% {
+    dat <- data %>% 
+    filter(country %in% sel & year >= 1990)
+      is <- isatpanel(
+            data = dat,
+            formula = as.formula(f),
+            index = c("country", "year"),
+            effect = "twoways",
+            iis = TRUE,
+            fesis = TRUE,
+            ar = a,
+            t.pval = p.value,
+            max.block.size = 20
+            )
+          models = tibble(source = f, 
+                                       country_sample = "EU15+selected", 
+                                       year_range = paste0(min(dat$year),":",max(dat$year)), 
+                                       p_val = p.value, 
+                                       is = list(is),
+                          iis = TRUE,
+                          b_size = 20,
+                          ar = a)
+    }
 
 
-tot_models$is[1]
-tot_models$is[[1]] %>% typeof()
-tot_models$is[[1]] %>% class()
-
-# Freezes with plot and plot_grid
-te %>% lapply(plot_grid)
-
-get_model(source = "edgar_v7_elect_ktco2", country_sample = "EU15", year_min = 1990, p.val = 0.001)
-models$is[models$source == "edgar_v7_elec_ktco2" & models$country_sample == "EU15" & models$year_range == "1990:2021" & models$p_val == 0.001]
-models %>% filter(models$source == "edgar_v7_elec_ktco2" & models$country_sample == "EU15" & models$year_range == "1990:2021", p_val== 0.05) %>% View()
+saveRDS(ets_models, here("output/models_ets_trials.RDS"))
 
 ```
+
+# Common Correlated Effects CCE
+```{r}
+##### Manually Implementing CCE Estimator
+####create x-sectional averages
+dat_simple <- data %>% filter(country %in% sel & year >= 1990) %>% select(country, year, l_edgar_v7, lgdp, lpop, lgdp_sq) %>% 
+  group_by(year) %>% mutate(mean_l_emissions = mean(l_edgar_v7),
+                            mean_lgdp = mean(lgdp),
+                            mean_lpop = mean(lpop),
+                            mean_lgdp_sq = mean(lgdp_sq)) %>% arrange(country)
+
+# ### generate matrix of interactions so that each unit can have different coefficients
+# Below to be automated
+i_mean_lemissions <- as.matrix(dat_simple$mean_l_emissions*dummy_cols(dat_simple$country, remove_selected_columns = TRUE))
+colnames(i_mean_lemissions) = paste("i_mean_lemissions", colnames(i_mean_lemissions))
+
+i_mean_lgdp <- as.matrix(dat_simple$mean_lgdp*dummy_cols(dat_simple$country, remove_selected_columns = TRUE))
+colnames(i_mean_lgdp) = paste("i_mean_lgdp", colnames(i_mean_lgdp))
+
+i_mean_lpop <- as.matrix(dat_simple$mean_lpop*dummy_cols(dat_simple$country, remove_selected_columns = TRUE))
+colnames(i_mean_lpop) = paste("i_mean_lpop", colnames(i_mean_lpop))
+
+i_mean_lgdp_sq <- as.matrix(dat_simple$mean_lgdp_sq*dummy_cols(dat_simple$country, remove_selected_columns = TRUE))
+colnames(i_mean_lgdp_sq) = paste("i_mean_lgdp_sq", colnames(i_mean_lgdp_sq))
+
+test_simple <- dat_simple %>% cbind(i_mean_lemissions, i_mean_lgdp, i_mean_lpop, i_mean_lgdp_sq) %>% clean_names
+
+m1 <- plm(as.formula(paste("l_edgar_v7 ~ + lgdp + lpop + lgdp_sq + ", paste(names(test_simple[11:94]), collapse = "+"))) , data = test_simple, model="within", effect="twoways", index=c("country", "year"))
+summary(m1)
+
+m2 <- plm(l_edgar_v7 ~ + lgdp + lpop + lgdp_sq + i_mean_lemissions + i_mean_lgdp + i_mean_lpop + i_mean_lgdp_sq, data = dat_simple, model="within", effect="twoways", index=c("country", "year"))
+summary(m2)
+
+m_pcce <- pcce(l_edgar_v7 ~ + lgdp + lpop + lgdp_sq, data = dat_simple, model="p", index=c("country", "year"))
+summary(m_pcce)
+
+#################################################################################
+
+t_pcce5 <- isatpanel(
+            data = test_simple,
+            formula = as.formula(paste("l_edgar_v7 ~ + lgdp + lpop + lgdp_sq + ", paste(names(test_simple[11:94]), collapse = "+"))),
+            index = c("country", "year"),
+            effect = "twoways",
+            iis = FALSE,
+            fesis = FALSE,
+            csis = FALSE,
+            sis = TRUE,
+            t.pval = 0.00000000001,
+            max.block.size = 2
+            )
+
+# Wondering about user.estimator argument in isatpanel?
+# calling plm engine automatically calls plm - any way to modify to call another function in plm package? ie. pcce
+
+saveRDS(t_pcce, here("output/pcce_trial.RDS"))
+test <- readRDS(here("output/pcce_trial.RDS"))
+```
+
