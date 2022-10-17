@@ -1,0 +1,284 @@
+---
+title: "Selected Results"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    dev: ragg_png
+
+---
+
+```{r set-options, echo=FALSE, cache=FALSE}
+options(width = 3000)
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, fig.show="hold", out.width="50%")
+
+library(data.table)
+library(tidyverse)
+library(openxlsx)
+library(gets)
+library(getspanel)
+library(here)
+library(doParallel)
+
+source(here("code/dicts.R"))
+
+# All models on collection of OTHER country groups
+models <- readRDS(here("output/edgar_v7_models_all.RDS")) %>% mutate(ar = 0)
+
+# Combination of standard functional form with and without AR
+mtest <- readRDS(here("output/edgar_v7_EU15_plus.RDS")) %>% 
+  mutate(source = "l_edgar_v7 ~ lgdp + lpop + lgdp_sq", ar = 0) %>% 
+  select(-c(main_title, sub_title))
+
+stand_eu15 <- readRDS(here("output/edgar_v7_EU15_plus_AR.RDS")) %>% 
+  mutate(source = "l_edgar_v7 ~ lgdp + lpop + lgdp_sq", ar = 1) %>% 
+  rbind(mtest)
+
+rm(mtest)
+
+# Additional functional forms for EU15
+for_models <- readRDS(here("output/edgar_v7_EU15_plus_formulas.RDS")) %>% arrange(p_val) %>% 
+  mutate(controls = case_when(grepl("~ lgdp + lpop + lgdp_sq + HDD16dailybypop + CDD18dailybypop", source, fixed = TRUE) ~ "w/ Temp Controls",
+                          grepl("~ lpop + HDD16dailybypop + CDD18dailybypop", source, fixed = TRUE) ~ "Temp & Pop Only",
+                          TRUE ~ "Standard Controls"),
+                        func = case_when(grepl("^l_edgar_v7", source) ~ "Levels",
+                        grepl("^d.l_edgar_v7", source) ~ "First-diffs",
+                        grepl("^g.l_edgar_v7", source) ~ "Growth rates"))
+
+
+# Models with ETS dummies
+ets <- readRDS(here("output/models_ets_trials.RDS")) %>% 
+  rbind(readRDS(here("output/models_ets_trials_incl05.RDS"))) %>% 
+  mutate(ets_05 = ifelse(grepl("EU_ETS_05", source), 1, 0),
+         ets_08 = ifelse(grepl("EU_ETS_08", source), 1, 0),
+         ets_13 = ifelse(grepl("EU_ETS_13", source), 1, 0),
+         controls = case_when(grepl("~ lgdp + lpop + lgdp_sq + HDD16dailybypop + CDD18dailybypop", source, fixed = TRUE) ~ "w/ Temp Controls",
+                          grepl("~ lpop + HDD16dailybypop + CDD18dailybypop", source, fixed = TRUE) ~ "Temp & Pop Only",
+                          TRUE ~ "Standard Controls"),
+         func = case_when(grepl("^l_edgar_v7", source) ~ "Levels",
+                        grepl("^d.l_edgar_v7", source) ~ "First-diffs",
+                        grepl("^g.l_edgar_v7", source) ~ "Growth rates"))
+
+ets_2000 <- readRDS(here("output/models_ets_trials_2000.RDS"))
+```
+
+
+```{r, echo = FALSE, include = FALSE}
+gen_p <- function(df){
+    for(i in 1:nrow(df)){
+      mt <- paste0(df$country_sample[i], " (", df$year_range[i],")", "; p.value: ",df$p_val[i],  "; AR: ",df$ar[i])
+      st <- paste0("Formula: ", df$source[i])
+      pl <- df %>% 
+    slice(i) %>% 
+    pull(is) %>% 
+    first() %>% 
+    plot(zero_line = FALSE)
+      
+      print(pl +
+    ggtitle(label = mt, subtitle = st))
+      
+    pg <- df %>% 
+    slice(i) %>% 
+    pull(is) %>% 
+    first() %>% 
+    plot_grid()
+    
+    print(pg +
+    ggtitle(label = mt, subtitle = st))
+    }
+}
+
+pull_m <- function(df, yr, p, i, a, con = NULL, f = NULL){
+  if(is.null(con) & is.null(f)){
+  df %>% 
+    filter(year_range == yr & 
+             p_val == p &
+           iis == i &
+           ar == a) %>% pull(is) %>% first()
+  }else{
+    df %>% 
+    filter(year_range == yr & 
+             p_val == p &
+           iis == i &
+           ar == a &
+             controls == con &
+             func == f) %>% pull(is) %>% first()
+  }
+}
+
+######################### Emergency extractors ##############################
+# Simple extract: EU-15+ Standard functional forms (AR1/AR0)
+stand_eu15 %>% filter(b_size == 20) %>% pull_m(df = ., yr = "1990:2021", p = 0.001, i = TRUE, a = 1)
+# Plot
+stand_eu15 %>% 
+  filter(year_range == "1990:2021" &
+          p_val == 0.001 &
+           iis == TRUE &
+           b_size == 20 &
+           ar == 1) %>% gen_p(.)
+
+ ##############################
+# Simple extract: EU-15+ additional functional forms (AR1/AR0)
+for_models %>% filter(func == "First-diffs" & controls == "Standard Controls") %>%  pull_m(df = ., yr = "1990:2021", p = 0.001, i = TRUE, a = 1)
+for_models %>% 
+  filter(p_val == 0.001 & 
+           ar == 0 & 
+           func == "First-diffs" &
+           controls == "Standard Controls") %>% gen_p(.)
+
+
+ ##############################
+# Simple extract: ETS Dummies (AR1/AR0)
+ets %>% filter(ets_08 == TRUE & ets_13 == FALSE) %>% 
+  pull_m(df = .,yr = "1990:2021", p = 0.001, i = TRUE, a = 0, con = "Standard Controls", f = "Levels")
+# Plot
+ets %>% filter(ets_08 == TRUE & 
+                 ets_13 == FALSE &
+                  p_val == 0.001 & 
+                 iis == TRUE & 
+                 ar == 0 &
+                 controls == "Standard Controls" &
+                 func == "Levels") %>% gen_p(.)
+
+```
+
+## Levels {.tabset} 
+
+### Standard Controls {.tabset}
+
+#### 1990-2021 {.tabset}
+
+##### AR = 0 {.tabset}
+
+```{r, echo = FALSE, cache = TRUE}
+
+st_level <- stand_eu15 %>% filter(p_val != 0.05 & iis == TRUE & b_size == 20& ar == 0) %>% 
+  mutate(source = "l_edgar_v7 ~ lgdp + lpop + lgdp_sq")
+
+st_level %>% filter(year_range == "1990:2021") %>% gen_p(.)
+
+```
+
+##### AR = 1 {.tabset}
+
+```{r, echo = FALSE, cache = TRUE, fig.show="hold"}
+
+st_lev_ar <- stand_eu15 %>% 
+  filter(p_val != 0.05 & iis == TRUE, b_size == 20 & ar == 1) %>% 
+  mutate(source = "l_edgar_v7 ~ lgdp + lpop + lgdp_sq")
+
+st_lev_ar %>% filter(year_range == "1990:2021") %>% gen_p(.)
+
+```
+
+##### w/ ETS {.tabset}
+```{r, echo = FALSE, cache = TRUE}
+
+ets %>% 
+  mutate(ets_yes = ets_05 + ets_08 + ets_13) %>% 
+  filter(func == "Levels" & controls == "Standard Controls" & ar == 0 & ets_yes == 3) %>% gen_p(.)
+
+```
+
+#### 2000-2021 {.tabset}
+##### AR = 0 {.tabset}
+
+```{r, echo = FALSE, cache = TRUE}
+
+st_level %>% filter(year_range == "2000:2021") %>% gen_p(.)
+
+```
+
+##### AR = 1 {.tabset}
+```{r, echo = FALSE}
+
+st_lev_ar %>% filter(year_range == "2000:2021") %>% gen_p(.)
+
+```
+
+##### w/ ETS {.tabset}
+```{r, echo = FALSE, cache = TRUE}
+
+ets_2000 %>% filter(ar == 0) %>% gen_p(.)
+
+```
+
+### w/ Temp Controls {.tabset} 
+
+#### no ETS {.tabset}
+```{r, echo = FALSE, cache = TRUE}
+
+for_models %>%
+  filter(func == "Levels" & controls == "w/ Temp Controls" & ar == 0) %>% arrange(-p_val) %>%  gen_p(.)
+    
+```
+
+#### ETS {.tabset}
+```{r, echo = FALSE, cache = TRUE}
+
+ets %>%
+  mutate(ets_yes = ets_05 + ets_08 + ets_13) %>% 
+  filter(func == "Levels" & controls == "w/ Temp Controls" & ar == 0 & ets_yes == 3) %>%  gen_p(.)
+    
+```
+
+
+### Temp & Pop Only {.tabset}
+#### no ETS {.tabset}
+```{r, echo = FALSE, cache = TRUE}
+
+for_models %>%
+  filter(func == "Levels" & controls == "Temp & Pop Only" & ar == 0) %>% arrange(-p_val) %>%  gen_p(.)
+
+```
+
+#### ETS {.tabset}
+```{r, echo = FALSE, cache = TRUE}
+
+ets %>%
+  mutate(ets_yes = ets_05 + ets_08 + ets_13) %>% 
+  filter(func == "Levels" & controls == "Temp & Pop Only" & ar == 0 & ets_yes == 3) %>% arrange(-p_val) %>% gen_p(.)
+    
+```
+
+## First-diffs {.tabset} 
+
+### AR = 0 {.tabset}
+
+```{r, echo = FALSE, cache = TRUE}
+
+for_models %>%
+  filter(func == "First-diffs" & ar == 0) %>% arrange(-p_val) %>% gen_p(.)
+
+```
+
+### AR = 1 {.tabset} 
+```{r, echo = FALSE, cache = TRUE}
+
+for_models %>%
+  filter(func == "First-diffs" & ar == 1) %>% arrange(-p_val) %>% gen_p(.)
+  
+```
+
+## Growth rates {.tabset} 
+### AR = 0 {.tabset}
+
+```{r, echo = FALSE, cache = TRUE}
+
+for_models %>%
+  filter(func == "Growth rates" & ar == 0) %>% arrange(-p_val) %>% gen_p(.)
+
+```
+
+
+### AR = 1 {.tabset} 
+```{r, echo = FALSE, cache = TRUE}
+
+for_models %>%
+  filter(func == "Growth rates" & ar == 1) %>% arrange(-p_val) %>% gen_p(.)
+  
+    
+```
+
