@@ -9,6 +9,8 @@ EU31 <- c("Austria", "Croatia", "Belgium", "Bulgaria", "Cyprus",
           "Portugal", "Romania", "Slovak Republic", "Slovenia", "Sweden", 
           "Switzerland", "Iceland", "Norway")
 
+sel <- c(EU15, "United States", "Canada", "New Zealand", "Australia", "Japan", "Switzerland")
+
 OECD <- readRDS(here("data/out/oecd_countries.rds"))
 
 country_dict <- readRDS(here("data/out/countrydict.RDS"))

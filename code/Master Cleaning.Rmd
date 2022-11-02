@@ -571,8 +571,94 @@ hdd <- read.xlsx(here("data/raw/nrg_chdd_a_spreadsheet.xlsx"), sheet = "HDD", ro
 data <- full_join(cdd, hdd, by = c("country", "year")) %>% 
   left_join(data, ., by = c("country", "year"))
 
+readRDS(here("data/out/elec_emissions_panel_clean_22.RDS")) %>% select(1:104) %>% 
+all.equal(data)
+
+```
+
+# GDP (constant 2015)
+
+```{r}
+
+gdp_c <- read.csv(here('data/raw/wb_constant2015_GDP.csv'), nrows = 10199) %>%
+  rename(year = Time, country = Country.Name, gdp_const = "GDP..constant.2015.US....NY.GDP.MKTP.KD.") %>% 
+  select(year, country, gdp_const) %>% 
+   mutate(country = ifelse(country %in% names(getcountry), unname(getcountry[country]), country),
+          gdp_const = as.numeric(gdp_const))
+
+test_diff(gdp_c, data, c('country', 'year')) 
+
+w_gdp <- left_join(data, gdp_c, by = c('country', 'year')) 
+
+readRDS(here("data/out/elec_emissions_panel_clean_22.RDS")) %>% all.equal(w_gdp)
+
+#saveRDS(w_gdp, here("data/out/elec_emissions_panel_clean_22.RDS"))
+# Canada missing from 1990-1996: Comparing and supplementing with OECD data
+
+```
+
+# OECD GDP in constant 2015 prices & Canadian Supplement (missing from WB)
+Gross domestic product (GDP): GDP in millions US dollars, Constant prices, constant exchange rates, OECD base year"
+
+Canadian supplement 1990-1996 missing from WB, supplementing with data from OECD: Canadian values from OECD database merged into WB column
+
+```{r}
+
+# RETAINED B/C OVERLAPS WITH WB INDICATOR: 
+# --- "Constant prices, constant exchange rates, OECD base year" (2015 base year)
+# Current prices: reference period == NA
+# Constant prices, national base year: reference period == 2012
+# All others ("Current prices, constant exchange rates, OECD base year";
+#             "Constant prices, constant exchange rates, OECD base year";
+#             "Constant prices, constant PPPs, OECD base year";
+#             "Constant prices, OECD base year"): reference period == 2015
+
+oecd_gdp <- read.csv(here('data/raw/OECD_GDP_constant_current prices_allcountries.csv')) %>% tibble() %>% 
+  filter(Unit.Code == "USD" & 
+           Measure == "Constant prices, constant exchange rates, OECD base year" & 
+           Transaction == "Gross domestic product (expenditure approach)") %>% 
+  select(Country, Year, Value) %>% 
+  rename(country = Country, year = Year, gdp_const_oecd = Value) %>%
+  mutate(country = ifelse(country %in% names(getcountry), unname(getcountry[country]), country),
+          gdp_const_oecd = gdp_const_oecd*1000000)
+
+full_gdp <- left_join(w_gdp, oecd_gdp, by = c('country', 'year'))
+  
+# Replace Canada values in WB GDP with OECD GDP values
+full_gdp$gdp_const[full_gdp$country == "Canada"] <- full_gdp$gdp_const_oecd[full_gdp$country == "Canada"]
+
+full_gdp %>% 
+  filter(country %in% sel) %>%
+  ggplot() +
+  geom_line(aes(x = year, y = gdp_const), color = "red") +
+  geom_line(aes(x = year, y = gdp_const_oecd), color = "black", linetype = "dashed") +
+  facet_wrap(vars(country), scales = "free")
+
 readRDS(here("data/out/elec_emissions_panel_clean_22.RDS")) %>% 
- all.equal(data)
+  filter(country != "Canada") %>% 
+  all.equal(filter(full_gdp[1:105], country != "Canada"))
+
+#saveRDS(full_gdp, here("data/out/elec_emissions_panel_clean_22.RDS"))
+
+```
+
+
+# HDD and CDD Supplement: to be added
+```{r}
+
+supp_hdd <- read_xlsx(here("data/raw/hdd_cdd_supp.xlsx"), sheet = "HDD_15") %>% 
+  pivot_longer(!Country, names_to = "year", values_to = "HDD") %>% 
+  rename(country = Country)
+
+supp_cdd <- read_xlsx(here("data/raw/hdd_cdd_supp.xlsx"), sheet = "CDD_21.1") %>% 
+  pivot_longer(!Country, names_to = "year", values_to = "CDD") %>% 
+  rename(country = Country)
+
+supp_weather <- full_join(supp_hdd, supp_cdd, by = c('country', 'year')) %>% 
+  filter(country %in% c("United States", "Canada", "Switzerland", "Japan", "United Kingdom", "New Zealand", "Australia") & year >= 1990)
+
+#saveRDS(supp_weather, here("data/temp/supp_weather_slim.RDS"))
+
 
 ```
 
