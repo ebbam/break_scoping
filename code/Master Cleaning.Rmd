@@ -22,6 +22,7 @@ library(openxlsx)
 library(stringr)
 library(janitor)
 library(plm)
+library(pdftools)
 conflict_prefer_all("dplyr", quiet = TRUE)
 
 ```
@@ -586,11 +587,7 @@ gdp_c <- read.csv(here('data/raw/wb_constant2015_GDP.csv'), nrows = 10199) %>%
    mutate(country = ifelse(country %in% names(getcountry), unname(getcountry[country]), country),
           gdp_const = as.numeric(gdp_const))
 
-test_diff(gdp_c, data, c('country', 'year')) 
-
 w_gdp <- left_join(data, gdp_c, by = c('country', 'year')) 
-
-readRDS(here("data/out/elec_emissions_panel_clean_22.RDS")) %>% all.equal(w_gdp)
 
 #saveRDS(w_gdp, here("data/out/elec_emissions_panel_clean_22.RDS"))
 # Canada missing from 1990-1996: Comparing and supplementing with OECD data
@@ -635,33 +632,250 @@ full_gdp %>%
   facet_wrap(vars(country), scales = "free")
 
 readRDS(here("data/out/elec_emissions_panel_clean_22.RDS")) %>% 
-  filter(country != "Canada") %>% 
-  all.equal(filter(full_gdp[1:105], country != "Canada"))
+  identical(full_gdp)
 
 #saveRDS(full_gdp, here("data/out/elec_emissions_panel_clean_22.RDS"))
 
 ```
 
-
-# HDD and CDD Supplement: to be added
+# HDD & CDD Manual Calculation: All countries except USA, Canada, (correct) Australia
 ```{r}
 
-supp_hdd <- read_xlsx(here("data/raw/hdd_cdd_supp.xlsx"), sheet = "HDD_15") %>% 
-  pivot_longer(!Country, names_to = "year", values_to = "HDD") %>% 
-  rename(country = Country)
-
-supp_cdd <- read_xlsx(here("data/raw/hdd_cdd_supp.xlsx"), sheet = "CDD_21.1") %>% 
-  pivot_longer(!Country, names_to = "year", values_to = "CDD") %>% 
-  rename(country = Country)
-
-supp_weather <- full_join(supp_hdd, supp_cdd, by = c('country', 'year')) %>% 
-  filter(country %in% c("United States", "Canada", "Switzerland", "Japan", "United Kingdom", "New Zealand", "Australia") & year >= 1990)
-
-#saveRDS(supp_weather, here("data/temp/supp_weather_slim.RDS"))
-
+# All countries in selected sample except USA, Canada, (correct) Australia
+country_files <- list.files(here("data/raw/HDD_CDD/HDD_CDD_renewables_ninja"))
+dd_comp <- tibble(year = numeric(), cat = character(), n = numeric(), country = character())
+for(cy in sel){
+  file <- country_files[grepl(cy, country_files)]
+  if(length(file) == 0){
+    print(paste(cy, "still needed!"))
+  }else{
+    dd_comp <- read.csv(here(paste0("data/raw/HDD_CDD/HDD_CDD_renewables_ninja/", file)), skip = 2) %>% 
+      tibble %>% 
+      select(time, temperature) %>% 
+      mutate(date_full = ymd_hms(time), 
+             time_stamp = format(as.POSIXct(date_full), format = "%H:%M:%S"), 
+             date = as.Date(date_full),
+             year = lubridate::year(date_full)) %>%
+      group_by(date, year) %>% 
+      summarise(avg_temp = sum(temperature)/24, 
+                cdd_d = ifelse(avg_temp > 18, avg_temp - 18, 0),
+                hdd_d = ifelse(avg_temp < 16, 16 - avg_temp, 0)) %>% 
+      group_by(year) %>% 
+      summarise(cdd = sum(cdd_d),
+                hdd = sum(hdd_d)) %>% ungroup %>% 
+      pivot_longer(!year, names_to = "cat", values_to = "n") %>% mutate(country = cy) %>% rbind(dd_comp)
+  }
+}
 
 ```
 
+# Manual CDD & HDD Calculation: USA
+Population estimate citations: US Census Bureau
+
+1990-2000: Table CO-EST2001-12-00 - Time Series of Intercensal State Population Estimates: April 1, 1990 to April 1, 2000; Population Division, U.S. Census Bureau
+```{r}
+
+us_dd <- tibble(year = numeric(), cat = character(), n = numeric(), state = character())
+
+for(s in state.abb){
+  us_dd <- read.csv(paste0("https://www.renewables.ninja/country_downloads/US/ninja_weather_country_US.",s,"_merra-2_population_weighted.csv"), skip = 2) %>% 
+    tibble %>% 
+    select(time, temperature) %>% 
+    mutate(date_full = ymd_hms(time), 
+           time_stamp = format(as.POSIXct(date_full), format = "%H:%M:%S"), 
+           date = as.Date(date_full),
+           year = lubridate::year(date_full)) %>% 
+    group_by(date, year) %>% 
+    summarise(avg_temp = sum(temperature)/24, 
+              cdd_d = ifelse(avg_temp > 18, avg_temp - 18, 0),
+              hdd_d = ifelse(avg_temp < 16, 16 - avg_temp, 0)) %>% 
+    group_by(year) %>% 
+    summarise(cdd = sum(cdd_d),
+              hdd = sum(hdd_d)) %>% ungroup %>% 
+    pivot_longer(!year, names_to = "cat", values_to = "n") %>% mutate(state = s) %>% 
+    rbind(us_dd,.)
+}
+
+# Population estimates 1990-2021
+# 2020-2021
+us_21_20 <- read.xlsx(here("data/raw/US_state_pop_est/NST-EST2021-POP.xlsx"), rows = 4:62) %>% 
+  tibble %>%
+  mutate(state_name = gsub("\\.", "", X1), state = state.abb[match(state_name,state.name)]) %>% 
+  select(state, `2020`, `2021`) %>% 
+  filter(!is.na(state)) %>% pivot_longer(!state, names_to = 'year', values_to = 'pop') %>% mutate(year = as.numeric(year))
+
+us_19_10 <- read.xlsx(here("data/raw/US_state_pop_est/nst-est2019-01.xlsx"), rows = 4:62) %>% tibble %>% 
+  mutate(state_name = gsub("\\.", "", X1), state = state.abb[match(state_name,state.name)]) %>% 
+  select(-c(X1, Census, Estimates.Base, state_name)) %>% 
+  relocate(state) %>% 
+  filter(!is.na(state)) %>% pivot_longer(!state, names_to = 'year', values_to = 'pop') %>% mutate(year = as.numeric(year))
+
+us_09_00 <- read_excel(here("data/raw/US_state_pop_est/st-est00int-01.xls"), skip = 3, n_max = 58) %>% 
+  tibble %>% 
+  mutate(state_name = gsub("\\.", "", `...1`), state = state.abb[match(state_name,state.name)]) %>% 
+  select(-c(`...1`, `...2`, state_name, `...13`, `...14`)) %>% 
+  relocate(state) %>% 
+  filter(!is.na(state)) %>% 
+  pivot_longer(!state, names_to = 'year', values_to = 'pop') %>% 
+  mutate(year = as.numeric(year))
+
+us_99_90 <- pdf_text("https://www2.census.gov/programs-surveys/popest/tables/1990-2000/intercensal/st-co/co-est2001-12-00.pdf") %>% 
+  paste() %>% str_split("\n") %>% 
+  unlist %>% tibble %>% slice(6:65) %>%
+  separate(data = ., col = `.`,  sep = "\\s(?=\\d)",  
+           into = c("state", "1990est", 1990, 1991, 1992, 1993, 1994, 1995, 1996, 1997, 1998, 1999, 2000)) %>% 
+  mutate(across(everything(), trimws)) %>% 
+  mutate(state = state.abb[match(state,state.name)], across(2:13, ~as.numeric(gsub(",", "", .x)))) %>% 
+  filter(!is.na(state)) %>% select(-c(`1990est`, `2000`)) %>% 
+  pivot_longer(!state, names_to = 'year', values_to = 'pop') %>% 
+  mutate(year = as.numeric(year))
+
+pop <- rbind(us_21_20, us_19_10, us_09_00, us_99_90) %>% group_by(year) %>% 
+  mutate(tot_pop = sum(pop), prop_pop = pop/tot_pop)
+
+us_dd_tot <- us_dd %>% left_join(pop, by = c('state', 'year')) %>% filter(year >= 1990) %>% group_by(year) %>% mutate(dd_prop = n*prop_pop) %>% group_by(year, cat) %>% summarise(dd_tot = sum(dd_prop)) %>% mutate(country = "United States")
+
+# Calculate mean differences: -0.0490 & 0.0776
+readRDS(here("data/out/elec_emissions_panel_clean_22.RDS")) %>% 
+  filter(country == "United States" & year >= 2000) %>% select(country, year, HDD16dailybypop, CDD18dailybypop) %>% rename(hdd = HDD16dailybypop, cdd = CDD18dailybypop) %>%  
+  pivot_longer(cols = c(hdd, cdd), names_to = "cat", values_to = "n") %>% left_join(filter(us_dd_tot, year >= 2000), by = c("year", "cat")) %>% mutate(frac = n/dd_tot) %>% group_by(cat) %>% summarise(1 - mean(frac, na.rm = TRUE))
+
+```
+
+# Manual CDD & HDD Calculation: Australia
+Population Statistics Citation: 
+Australian Bureau of Statistics 2022, National, state and territory population, ABS, viewed 7 November 2022, <https://www.abs.gov.au/statistics/people/population/national-state-and-territory-population/mar-2022>.
+```{r}
+
+aus.abbr <- c(australian_capital_territory = "CT", 
+              new_south_wales = "NS", 
+              northern_territory = "NT", 
+              queensland = "QL", 
+              south_australia = "SA", 
+              tasmania = "TS", 
+              victoria = "VI", 
+              western_australia = "WA")
+
+aus_dd <- tibble(year = numeric(), cat = character(), n = numeric(), state = character())
+
+for(a in aus.abbr){
+  aus_dd <- read.csv(paste0("https://www.renewables.ninja/country_downloads/AU/ninja_weather_country_AU.",a,"_merra-2_population_weighted.csv"), skip = 2) %>% 
+ tibble %>% 
+  select(time, temperature) %>% 
+  mutate(date_full = ymd_hms(time),
+         time_stamp = format(as.POSIXct(date_full), format = "%H:%M:%S"),
+         date = as.Date(date_full),
+         year = lubridate::year(date_full)) %>%
+  group_by(date, year) %>%
+  summarise(avg_temp = sum(temperature)/24,
+            cdd_d = ifelse(avg_temp > 18, avg_temp - 18, 0),
+            hdd_d = ifelse(avg_temp < 16, 16 - avg_temp, 0)) %>%
+  group_by(year) %>%
+  summarise(cdd = sum(cdd_d),
+            hdd = sum(hdd_d)) %>% ungroup %>%
+  pivot_longer(!year, names_to = "cat", values_to = "n") %>% 
+    mutate(state = a) %>% 
+    rbind(aus_dd,.)
+}
+
+aus_pop <- read_excel(here("data/raw/HDD_CDD/HDD_CDD_US_AUS_CAN/AUS_pop_310104.xlsx"), 
+                      sheet = "Data1", col_types = c("date", rep("numeric", 27))) %>% 
+  slice(-c(1:9)) %>% clean_names %>% select(x1, contains("persons")) %>%
+  rename_with(cols = everything(), ~gsub("estimated_resident_population_persons_", "", .)) %>% 
+  rename(date_full = x1) %>% 
+  mutate(year = lubridate::year(date_full)) %>% 
+  group_by(year) %>%
+  summarise(across(everything(), mean)) %>% select(-date_full) %>% 
+    pivot_longer(!year, names_to = "state", values_to = "pop") %>% 
+  mutate(state = unname(aus.abbr[state])) %>% filter(!is.na(state)) %>% 
+  group_by(year) %>% 
+    mutate(tot_pop = sum(pop), prop_pop = pop/tot_pop)
+
+aus_dd_tot <- aus_dd %>% left_join(aus_pop, by = c('state', 'year')) %>% filter(year >= 1990) %>% group_by(year) %>% mutate(dd_prop = n*prop_pop) %>% group_by(year, cat) %>% summarise(dd_tot = sum(dd_prop)) %>% mutate(country = "Australia")
+
+# Mean differences: 0.0518 & -0.109
+data %>% 
+  filter(country == "Australia" & year >= 2000) %>% select(country, year, HDD16dailybypop, CDD18dailybypop) %>% rename(hdd = HDD16dailybypop, cdd = CDD18dailybypop) %>%  
+  pivot_longer(cols = c(hdd, cdd), names_to = "cat", values_to = "n") %>% left_join(filter(aus_dd_tot, year >= 2000), by = c("year", "cat")) %>% mutate(frac = n/dd_tot) %>% group_by(cat) %>% summarise(1- mean(frac, na.rm = TRUE))
+
+```
+
+# Manual CDD & HDD Calculation: Canada
+Population stats: https://www150.statcan.gc.ca/t1/tbl1/en/cv.action?pid=1710000501
+Cite: Statistics Canada
+```{r}
+
+can.abbr <- read.xlsx(here('data/raw/HDD_CDD/HDD_CDD_US_AUS_CAN/can_abbrev.xlsx'), rowNames = TRUE)
+
+can_dd <- tibble(year = numeric(), cat = character(), n = numeric(), state = character())
+
+for(p in can.abbr$abbr){
+    can_dd <- read.csv(paste0("https://www.renewables.ninja/country_downloads/CA/ninja_weather_country_CA.",p,"_merra-2_population_weighted.csv"), skip = 2) %>% 
+     tibble %>% 
+      select(time, temperature) %>% 
+      mutate(date_full = ymd_hms(time),
+             time_stamp = format(as.POSIXct(date_full), format = "%H:%M:%S"),
+             date = as.Date(date_full),
+             year = lubridate::year(date_full)) %>%
+      group_by(date, year) %>%
+      summarise(avg_temp = sum(temperature)/24,
+                cdd_d = ifelse(avg_temp > 18, avg_temp - 18, 0),
+                hdd_d = ifelse(avg_temp < 16, 16 - avg_temp, 0)) %>%
+      group_by(year) %>%
+      summarise(cdd = sum(cdd_d),
+                hdd = sum(hdd_d)) %>% ungroup %>%
+      pivot_longer(!year, names_to = "cat", values_to = "n") %>% 
+         mutate(state = p) %>% 
+          rbind(can_dd,.)
+}
+
+can_pop <- read.csv(here('data/raw/HDD_CDD/HDD_CDD_US_AUS_CAN/Canada_province_pops.csv')) %>% tibble %>% 
+    filter(Age.group == "All ages", 
+           GEO %in% c(rownames(can.abbr))) %>%
+    select(REF_DATE, GEO, VALUE) %>%
+    rename(year = REF_DATE, state = GEO, pop = VALUE) %>% 
+    group_by(year) %>% 
+    mutate(prop_pop = pop/sum(pop), tot_pop = sum(pop), state = can.abbr[state,])
+
+can_dd_tot <- can_dd %>% left_join(can_pop, by = c('state', 'year')) %>% group_by(year) %>% mutate(dd_prop = n*prop_pop) %>% group_by(year, cat) %>% summarise(dd_tot = sum(dd_prop, na.rm = TRUE)) %>% mutate(country = "Canada")
+
+# Mean differences: -.0681 & 0.0431
+data %>% 
+  filter(country == "Canada" & year >= 2000) %>% select(country, year, HDD16dailybypop, CDD18dailybypop) %>% rename(hdd = HDD16dailybypop, cdd = CDD18dailybypop) %>%  
+  pivot_longer(cols = c(hdd, cdd), names_to = "cat", values_to = "n") %>% left_join(filter(can_dd_tot, year >= 2000), by = c("year", "cat")) %>% mutate(frac = n/dd_tot) %>% group_by(cat) %>% summarise(1-mean(frac, na.rm = TRUE))
+
+```
+
+# Combine Manual Calculation HDD & CDD
+```{r}
+
+# Add Canada and USA
+dd_comp_aus_us_can <- us_dd_tot %>% rbind(., can_dd_tot) %>% rename(n = dd_tot) %>% rbind(dd_comp, .)
+
+# Replace values for Australia 1990-2019
+dd_comp_aus_us_can$n[which(dd_comp_aus_us_can$country == "Australia" & dd_comp_aus_us_can$year %in% 1990:2019)] <- aus_dd_tot$dd_tot
+
+# Incorporating values for 2020-2021
+dd_20_21 <- if(readRDS(here("data/out/elec_emissions_panel_clean_22.RDS")) %>% identical(full_gdp)){
+  readRDS(here("data/out/elec_emissions_panel_clean_22.RDS")) %>% filter(country %in% sel & year >= 2020) %>% select(year, country, HDD16dailybypop, CDD18dailybypop) %>% rename(hdd = HDD16dailybypop, cdd = CDD18dailybypop) %>% pivot_longer(cols = !c(country, year), names_to = 'cat', values_to = 'n')
+}else{break}
+
+# Merge with main dataset
+data_dd_full <- rbind(dd_20_21, dd_comp_aus_us_can) %>% pivot_wider(id_cols = c(year, country), names_from = cat, values_from = n) %>%  left_join(full_gdp, ., by = c('year', 'country'))
+
+# Sanity check
+data_dd_full %>% select(1:106) %>% identical(full_gdp)
+
+data_dd_full %>% filter(country %in% sel & year >= 1990) %>% 
+  select(year, country, hdd, cdd, HDD16dailybypop, CDD18dailybypop) %>% 
+  pivot_longer(cols = !c(year, country), names_to = 'cat', values_to = 'n') %>% 
+  ggplot() +
+  geom_line(aes(x = year, y = n, color = cat)) + 
+  facet_wrap(vars(country), scales = "free")
+
+saveRDS(data_dd_full,here("data/out/elec_emissions_panel_clean_22.RDS"))
+
+```
 
 # Variable Documentation
 ```{r, eval = FALSE, include = FALSE}
@@ -673,5 +887,4 @@ all.equal(vars$Name, names(data))
 # vars[match(names(data), vars$Name),]  %>% identical(vars)
 
 ```
-
 
