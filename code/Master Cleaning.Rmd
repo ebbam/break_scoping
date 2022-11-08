@@ -639,6 +639,10 @@ readRDS(here("data/out/elec_emissions_panel_clean_22.RDS")) %>%
 ```
 
 # HDD & CDD Manual Calculation: All countries except USA, Canada, (correct) Australia
+Cite Gelaro et al. 2017: https://doi.org/10.1175/JCLI-D-16-0758.1
+NASA Data Information Policy: https://science.nasa.gov/earth-science/earth-science-data/data-information-policy
+
+Data extracted from: https://www.renewables.ninja/
 ```{r}
 
 # All countries in selected sample except USA, Canada, (correct) Australia
@@ -856,7 +860,7 @@ dd_comp_aus_us_can <- us_dd_tot %>% rbind(., can_dd_tot) %>% rename(n = dd_tot) 
 dd_comp_aus_us_can$n[which(dd_comp_aus_us_can$country == "Australia" & dd_comp_aus_us_can$year %in% 1990:2019)] <- aus_dd_tot$dd_tot
 
 # Incorporating values for 2020-2021
-dd_20_21 <- if(readRDS(here("data/out/elec_emissions_panel_clean_22.RDS")) %>% identical(full_gdp)){
+dd_20_21 <- if(readRDS(here("data/out/elec_emissions_panel_clean_22.RDS")) %>% select(1:106) %>% identical(full_gdp)){
   readRDS(here("data/out/elec_emissions_panel_clean_22.RDS")) %>% filter(country %in% sel & year >= 2020) %>% select(year, country, HDD16dailybypop, CDD18dailybypop) %>% rename(hdd = HDD16dailybypop, cdd = CDD18dailybypop) %>% pivot_longer(cols = !c(country, year), names_to = 'cat', values_to = 'n')
 }else{break}
 
@@ -873,7 +877,9 @@ data_dd_full %>% filter(country %in% sel & year >= 1990) %>%
   geom_line(aes(x = year, y = n, color = cat)) + 
   facet_wrap(vars(country), scales = "free")
 
-saveRDS(data_dd_full,here("data/out/elec_emissions_panel_clean_22.RDS"))
+#saveRDS(data_dd_full, here("data/out/elec_emissions_panel_clean_22.RDS"))
+
+readRDS(here("data/out/elec_emissions_panel_clean_22.RDS")) %>% identical(data_dd_full)
 
 ```
 
