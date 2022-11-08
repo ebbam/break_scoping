@@ -1,0 +1,421 @@
+---
+title: "Full_Analysis"
+author: "Ebba Mark"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+# Load libraries
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+rm(list = ls())
+library(data.table)
+library(tidyverse)
+library(openxlsx)
+library(stringr)
+library(gets)
+library(getspanel)
+library(here)
+library(doParallel)
+library(fastDummies)
+library(janitor)
+library(plm)
+# 
+# install.packages(
+#   "https://github.com/gsucarrat/gets/raw/master/gets_devel.tar.gz",
+#   repos = NULL, type = "source"
+# )
+
+# devtools::install_github("moritzpschwarz/getspanel")
+
+source(here("code/dicts.R"))
+
+data <- readRDS(here("data/out/elec_emissions_panel_clean_22.RDS"))
+
+```
+
+# Create controls, scale emissions (ktco2/ktco2e), other required transformations (FD, lags, growth rates)
+# 28/10: GDP (current US$) replaced with GDP (constant 2015 $US)
+
+Three available GDP indicators: 
+- WB GDP current US$ (gdp)   
+- OECD 2015 constant prices US$ (gdp_const_oecd)   
+- WB 2015 constant price $US (gdp_const) 
+
+NOTE: Canada is missing WB 2015 constant price US$ data points from 1990-1996, 
+Canada's WB TS has been replaced with the OECD data
+```{r}
+
+dfi <- data %>% 
+  mutate(gdp_sq = gdp^2,
+         gdp_wb_sq = gdp_const^2,
+         gdp_oecd_sq = gdp_const_oecd^2,
+         lpop = log(pop),
+         lgdp = log(gdp),
+         lgdp_wb = log(gdp_const),
+         lgdp_oecd = log(gdp_const_oecd),
+         lgdp_sq = log(gdp)^2,
+         lgdp_wb_sq = log(gdp_const)^2,
+         lgdp_oecd_sq = log(gdp_const_oecd)^2, 
+         edgar_v7_elec_ktco2 = edgar_v7_elec_mtco2*1000,
+         l_edgar_v7 = log(edgar_v7_elec_ktco2),
+         owid_1_elec_heat_ktco2e = owid_1_elec_heat_tco2e/1000,
+         owid_2_elec_ktco2e = owid_2_elec_mtco2e*1000,
+         bp_energy_ktco2 = bp_energy_mtco2*1000)
+
+df <- dfi %>% group_by(country) %>%
+  # Lags (3), first-difference (growth rate = fd in log) (EDGAR V7), lgdp (WB current, WB constant 2015, OECD constant 2015), lpop, lgdp_sq (WB current, WB constant 2015, OECD constant 2015)
+  mutate(across(c(l_edgar_v7, lgdp, lgdp_wb, lgdp_oecd, lpop, lgdp_sq, lgdp_wb_sq, lgdp_oecd_sq), list(l1 = ~lag(.x, n = 1L),
+         l2 = ~lag(.x, n = 2L),
+         l3 = ~lag(.x, n = 3L), 
+         d = ~c(NA, diff(.x, differences = 1))),
+          #g = ~(c(NA, diff(.x, differences = 1))/lag(.x, n = 1L))*100),
+         .names = "{.fn}.{.col}")) %>% 
+  mutate(EU_ETS_05 = ifelse(country %in% EU15 & year >= 2005, 1, 0),
+         EU_ETS_08 = ifelse(country %in% EU15 & year >= 2008, 1, 0),
+         EU_ETS_13 = ifelse(country %in% EU15 & year >= 2013, 1, 0))
+         
+```
+
+# Check difference in GDPs
+```{r}
+
+df %>% 
+  filter(country %in% sel) %>% 
+  ggplot() +
+  geom_line(aes(x = year, y = lgdp), color = "blue") +
+  geom_line(aes(x = year, y = lgdp_oecd), color = "red") +
+  geom_line(aes(x = year, y = lgdp_wb), color = "black", linetype = "dashed") +
+  facet_wrap(vars(country), scales = "free")
+  
+```
+
+
+# Standard formula in log-levels and growth rates (fd logs)
+Uses WB GDP data in this instance
+```{r}
+
+form <- c(
+# Standard
+"l_edgar_v7 ~ lgdp_wb + lpop + lgdp_wb_sq",
+
+# Growth rates
+"d.l_edgar_v7 ~ d.lgdp_wb + d.lpop + d.lgdp_wb_sq")
+
+form_ets <- c(paste(form, "+ EU_ETS_05"),
+              paste(form, "+ EU_ETS_08"), 
+              paste(form, "+ EU_ETS_13"), 
+              paste(form, "+ EU_ETS_05 + EU_ETS_08"),
+              paste(form, "+ EU_ETS_05 + EU_ETS_13"),
+              paste(form, "+ EU_ETS_08 + EU_ETS_13"),
+              paste(form, "+ EU_ETS_05 + EU_ETS_08 + EU_ETS_13"))
+
+```
+
+# Standard log-level and growth rate formulas
+504 models total
+```{r}
+
+cl <- makeCluster(6)
+registerDoParallel(cl)
+
+models <- foreach(f = c(form, form_ets), .combine = rbind, .packages = c('tidyverse', 'getspanel')) %:%
+  foreach(a = c(0,1), .combine = rbind) %:%
+  foreach(yr = c(1990, 2000), .combine = rbind) %:%
+  foreach(b = c(10, 20, 30), .combine = rbind) %:%
+    foreach(p.value = c(0.05, 0.01, 0.001), .combine = rbind) %dopar% {
+    dat <- df %>% 
+    filter(country %in% sel & year >= yr)
+      is <- isatpanel(
+            data = dat,
+            formula = as.formula(f),
+            index = c("country", "year"),
+            effect = "twoways",
+            iis = TRUE,
+            fesis = TRUE,
+            ar = a,
+            t.pval = p.value,
+            max.block.size = b
+            )
+          models = tibble(source = f, 
+                          country_sample = "EU15+selected", 
+                          year_range = paste0(min(dat$year),":",max(dat$year)), 
+                          p_val = p.value, 
+                          is = list(is),
+                          iis = TRUE,
+                          b_size = b,
+                          ar = a)
+    }
+
+saveRDS(models, here("output/final_results/standard_models.RDS"))
+
+```
+
+# Formulas with weather controls (IEA data: 2000:2021)
+```{r}
+
+form_weather <- c(
+  # Integrating temperature controls (only valid for 2000:2021)
+  "l_edgar_v7 ~ lgdp_wb + lpop + lgdp_wb_sq + HDD16dailybypop + CDD18dailybypop",
+
+  # Controlling only for population and temperature (removing GDP) (only valid for 2000:2021)
+  "l_edgar_v7 ~ lpop + HDD16dailybypop + CDD18dailybypop"
+)
+
+form_ets_weather <- c(paste(form_weather, "+ EU_ETS_05"),
+              paste(form_weather, "+ EU_ETS_08"), 
+              paste(form_weather, "+ EU_ETS_13"), 
+              paste(form_weather, "+ EU_ETS_05 + EU_ETS_08"),
+              paste(form_weather, "+ EU_ETS_05 + EU_ETS_13"),
+              paste(form_weather, "+ EU_ETS_08 + EU_ETS_13"),
+              paste(form_weather, "+ EU_ETS_05 + EU_ETS_08 + EU_ETS_13"))
+
+```
+
+# Run weather controls
+Restricted to 2000:2021 with IEA data
+252 models
+```{r}
+
+cl <- makeCluster(6)
+registerDoParallel(cl)
+
+weather_models <- foreach(f = c(form_weather, form_ets_weather), .combine = rbind, .packages = c('tidyverse', 'getspanel')) %:%
+  foreach(a = c(0,1), .combine = rbind) %:%
+  foreach(b = c(10, 20, 30), .combine = rbind) %:%
+    foreach(p.value = c(0.05, 0.01, 0.001), .combine = rbind) %dopar% {
+    dat <- df %>% 
+    filter(country %in% sel & year >= 2000)
+      is <- isatpanel(
+            data = dat,
+            formula = as.formula(f),
+            index = c("country", "year"),
+            effect = "twoways",
+            iis = TRUE,
+            fesis = TRUE,
+            ar = a,
+            t.pval = p.value,
+            max.block.size = b
+            )
+          models = tibble(source = f, 
+                          country_sample = "EU15+selected", 
+                          year_range = paste0(min(dat$year),":",max(dat$year)), 
+                          p_val = p.value, 
+                          is = list(is),
+                          iis = TRUE,
+                          b_size = b,
+                          ar = a)
+    }
+
+#saveRDS(weather_models, here("output/final_results/weather_models.RDS"))
+
+```
+
+# Formulas with weather controls from manually calculated population-weighted CDD and HDD
+```{r}
+
+df %>% filter(country %in% sel & year >= 1990) %>% select(year, country, HDD16dailybypop, CDD18dailybypop, hdd, cdd) %>% 
+  pivot_longer(cols = !c(year, country), names_to = "cat", values_to = "n") %>% 
+  ggplot(aes(x = year, y = n, color = cat)) +
+  geom_line() +
+  facet_wrap(vars(country), scales = "free")
+
+form_dd <- c(
+  # Integrating temperature controls (only valid for 2000:2021)
+  "l_edgar_v7 ~ lgdp_wb + lpop + lgdp_wb_sq + hdd + cdd",
+
+  # Controlling only for population and temperature (removing GDP) (only valid for 2000:2021)
+  "l_edgar_v7 ~ lpop + hdd + cdd"
+)
+
+form_ets_dd <- c(paste(form_dd, "+ EU_ETS_05"),
+              paste(form_dd, "+ EU_ETS_08"), 
+              paste(form_dd, "+ EU_ETS_13"), 
+              paste(form_dd, "+ EU_ETS_05 + EU_ETS_08"),
+              paste(form_dd, "+ EU_ETS_05 + EU_ETS_13"),
+              paste(form_dd, "+ EU_ETS_08 + EU_ETS_13"),
+              paste(form_dd, "+ EU_ETS_05 + EU_ETS_08 + EU_ETS_13"))
+
+```
+
+# Run weather controls
+Manually calculated CDD/HDD data
+576 models
+```{r}
+
+cl <- makeCluster(7)
+registerDoParallel(cl)
+
+dd_calc_models <- foreach(f = c(form_dd, form_ets_dd), .combine = rbind, .packages = c('tidyverse', 'getspanel')) %:%
+  foreach(a = c(0,1), .combine = rbind) %:%
+  foreach(yr = c(1990, 2000), .combine = rbind) %:%
+  foreach(b = c(10, 20, 30), .combine = rbind) %:%
+    foreach(p.value = c(0.05, 0.01, 0.001), .combine = rbind) %dopar% {
+    dat <- df %>% 
+    filter(country %in% sel & year >= yr)
+      is <- isatpanel(
+            data = dat,
+            formula = as.formula(f),
+            index = c("country", "year"),
+            effect = "twoways",
+            iis = TRUE,
+            fesis = TRUE,
+            ar = a,
+            t.pval = p.value,
+            max.block.size = b
+            )
+          models = tibble(source = f, 
+                          country_sample = "EU15+selected", 
+                          year_range = paste0(min(dat$year),":",max(dat$year)), 
+                          p_val = p.value, 
+                          is = list(is),
+                          iis = TRUE,
+                          b_size = b,
+                          ar = a)
+    }
+
+#saveRDS(dd_calc_models, here("output/final_results/weather_calc_dd_models.RDS"))
+
+```
+
+
+# Growth rates with higher p-value
+12 models
+```{r}
+
+cl <- makeCluster(6)
+registerDoParallel(cl)
+
+gr_models <- foreach(a = c(0,1), .combine = rbind, .packages = c('tidyverse', 'getspanel')) %:%
+  foreach(yr = c(1990, 2000), .combine = rbind) %:%
+  foreach(b = c(10, 20, 30), .combine = rbind) %dopar% {
+    dat <- df %>% 
+    filter(country %in% sel & year >= yr)
+      is <- isatpanel(
+            data = dat,
+            formula = "d.l_edgar_v7 ~ d.lgdp_wb + d.lpop + d.lgdp_wb_sq",
+            index = c("country", "year"),
+            effect = "twoways",
+            iis = TRUE,
+            fesis = TRUE,
+            ar = a,
+            t.pval = 0.1,
+            max.block.size = b
+            )
+          models = tibble(source = "d.l_edgar_v7 ~ d.lgdp_wb + d.lpop + d.lgdp_wb_sq", 
+                          country_sample = "EU15+selected", 
+                          year_range = paste0(min(dat$year),":",max(dat$year)), 
+                          p_val = 0.1, 
+                          is = list(is),
+                          iis = TRUE,
+                          b_size = b,
+                          ar = a)
+  }
+
+saveRDS(gr_models, here("output/final_results/growth_rate_high_pval.RDS"))
+
+```
+
+
+
+# TO BE ADDED: Growth rates with weather controls
+```{r}
+
+
+```
+
+# Formulas in levels w/ temp controls and ETS dummies
+```{r}
+form_basic <- c(
+# Standard
+"l_edgar_v7 ~ lgdp_wb + lpop + lgdp_wb_sq",
+
+"l_edgar_v7 ~ lgdp_wb + lpop + lgdp_wb_sq + EU_ETS_05 + EU_ETS_08 + EU_ETS_13")
+
+```
+
+# Run with standard 20 block size and no 5% sig value
+```{r}
+
+# cfesis_test_ets <- df %>% 
+#     filter(country %in% sel & year >= 1990) %>% isatpanel(
+#             data = .,
+#             formula = "l_edgar_v7 ~ lgdp_wb + lpop + lgdp_wb_sq + EU_ETS_05 + EU_ETS_08 + EU_ETS_13",
+#             index = c("country", "year"),
+#             effect = "twoways",
+#             iis = TRUE,
+#             fesis = TRUE,
+#             cfesis = TRUE,
+#             cfesis_var= c('lgdp_wb', 'lpop', 'lgdp_wb_sq'),
+#             t.pval = 0.01,
+#             max.block.size = 20
+#             )
+
+cfesis_models <- tibble()
+for(f in form_basic){
+  for(p.value in c(0.05, 0.01, 0.001)){
+    dat <- df %>% 
+    filter(country %in% sel & year >= 1990)
+      is <- isatpanel(
+            data = dat,
+            formula = as.formula(f),
+            index = c("country", "year"),
+            effect = "twoways",
+            iis = TRUE,
+            fesis = TRUE,
+            cfesis = TRUE,
+            cfesis_var = c('lgdp_wb', 'lpop', 'lgdp_wb_sq'),
+            #ar = a,
+            t.pval = p.value,
+            max.block.size = 20
+            )
+          cfesis_models <- rbind(cfesis_models, tibble(source = f, 
+                          country_sample = "EU15+selected", 
+                          year_range = paste0(min(dat$year),":",max(dat$year)), 
+                          p_val = p.value, 
+                          is = list(is),
+                          iis = TRUE,
+                          b_size = 20,
+                          ar = 0))
+    }
+}
+  #foreach(a = c(0,1), .combine = rbind) %:%
+  #foreach(yr = c(1990, 2000), .combine = rbind) %:%
+  #foreach(b = c(10, 20, 30), .combine = rbind) %:%
+    
+
+cfesis_models %>% 
+  mutate(cfesis = TRUE, cfesis_var = 'lgdp_wb;lpop;lgdp_wb_sq') %>% 
+saveRDS(here("output/final_results/cfesis_models_Xtemp_XETS.RDS"))
+
+```
+
+# Run with standard 20 block size and no 5% sig value
+```{r}
+
+tis_test <- 
+  for(p in c(0.05, 0.01, 0.001)){
+    df %>%
+    tis <- filter(country %in% sel & year >= 1990) %>% isatpanel(
+            data = .,
+            formula = "l_edgar_v7 ~ lgdp_wb + lpop + lgdp_wb_sq",
+            index = c("country", "year"),
+            effect = "twoways",
+            iis = TRUE,
+            fesis = TRUE,
+            tis = TRUE,
+            t.pval = p,
+            max.block.size = 20
+            )
+  
+  cfesis_models <- rbind(cfesis_models, tibble(source = f, 
+                          country_sample = "EU15+selected", 
+                          year_range = paste0(min(dat$year),":",max(dat$year)), 
+                          p_val = p.value, 
+                          is = list(tis),
+                          iis = TRUE,
+                          b_size = 20,
+                          ar = 0))
+```
