@@ -339,20 +339,6 @@ form_basic <- c(
 # Run with standard 20 block size and no 5% sig value
 ```{r}
 
-# cfesis_test_ets <- df %>% 
-#     filter(country %in% sel & year >= 1990) %>% isatpanel(
-#             data = .,
-#             formula = "l_edgar_v7 ~ lgdp_wb + lpop + lgdp_wb_sq + EU_ETS_05 + EU_ETS_08 + EU_ETS_13",
-#             index = c("country", "year"),
-#             effect = "twoways",
-#             iis = TRUE,
-#             fesis = TRUE,
-#             cfesis = TRUE,
-#             cfesis_var= c('lgdp_wb', 'lpop', 'lgdp_wb_sq'),
-#             t.pval = 0.01,
-#             max.block.size = 20
-#             )
-
 cfesis_models <- tibble()
 for(f in form_basic){
   for(p.value in c(0.05, 0.01, 0.001)){
@@ -419,3 +405,85 @@ tis_test <-
                           b_size = 20,
                           ar = 0))
 ```
+
+# Common Correlated Effects CCE
+```{r} 
+##### Manually Implementing CCE Estimator
+####create x-sectional averages
+dat_simple <- df %>% filter(country %in% sel & year >= 1990) %>% select(country, year, l_edgar_v7, lgdp_wb, lpop, lgdp_wb_sq) %>% 
+  group_by(year) %>% mutate(mean_l_emissions = mean(l_edgar_v7),
+                            mean_lgdp = mean(lgdp_wb),
+                            mean_lpop = mean(lpop),
+                            mean_lgdp_sq = mean(lgdp_wb_sq)) %>% arrange(country)
+
+# ### generate matrix of interactions so that each unit can have different coefficients
+# Below to be automated
+
+cce_dummies <- function(df, vars){
+  vs <- list()
+  for(v in vars){
+    t <- as.matrix(df[[v]]*dummy_cols(df$country, remove_selected_columns = TRUE))
+    colnames(t) = paste0(v, colnames(t))
+    vs <- append(vs, list(t))
+  } 
+  names(vs) <- vars
+  return(vs)
+}
+
+vt <- cce_dummies(dat_simple, c('mean_l_emissions', 'mean_lgdp', 'mean_lpop', 'mean_lgdp_sq'))
+
+test_simple <- dat_simple %>% cbind(vt[[1]], vt[[2]], vt[[3]], vt[[4]]) %>% clean_names
+
+# Note: automate column selection in formula for m1
+m1 <- plm(as.formula(paste("l_edgar_v7 ~ lgdp_wb + lpop + lgdp_wb_sq + ", paste(names(test_simple[11:94]), collapse = "+"))) , data = test_simple, model="within", effect="twoways", index=c("country", "year"))
+summary(m1)
+
+m_pcce <- pcce(l_edgar_v7 ~ lgdp_wb + lpop + lgdp_wb_sq, data = dat_simple, effect = "twoways", model="p", index=c("country", "year"))
+summary(m_pcce)
+
+for(i in 1:20){
+  if(identical(round(m_pcce$coefficients, i), round(m1$coefficients[1:3], i))){
+    next
+  }else{
+    print(paste("Coefficients identical at", i-1, "decimal places."))
+    break}
+}
+
+#################################################################################
+pcce_models <- tibble()
+for(p.value in c(0.05, 0.01, 0.001)){
+    is <- isatpanel(data = test_simple ,
+            formula = as.formula(paste("l_edgar_v7 ~ lgdp_wb + lpop + lgdp_wb_sq + ", paste(names(test_simple[11:94]), collapse = "+"))),
+            index = c("country", "year"),
+            effect = "twoways",
+            iis = TRUE,
+            fesis = TRUE,
+            t.pval = p.value,
+            max.block.size = 20
+            ) 
+  pcce_models <- rbind(pcce_models, tibble(source = "pcce(l_edgar_v7 ~ lgdp_wb + lpop + lgdp_wb_sq)", 
+                          country_sample = "EU15+selected", 
+                          year_range = paste0(min(test_simple$year),":",max(test_simple$year)), 
+                          p_val = p.value, 
+                          is = list(is),
+                          iis = TRUE,
+                          b_size = 20,
+                          ar = 0))
+}
+
+saveRDS(pcce_models, here("output/final_results/pcce_models.RDS"))
+# Wondering about user.estimator argument in isatpanel?
+# calling plm engine automatically calls plm - any way to modify to call another function in plm package? ie. pcce
+
+# Basic call from above: iis = TRUE, pval = 0.001, block size = 20
+#saveRDS(t_pcce, here("output/pcce_trial2.RDS"))
+# test2 <- readRDS(here("output/pcce_trial2.RDS"))
+# 
+# # Latest trial with updated variables: 
+# # iis = TRUE, pval = 0.001, block size = 20
+# 
+# #saveRDS(t_pcce, here("output/pcce_trial.RDS"))
+# saveRDS(t_pcce001, here("output/pcce_trial001.RDS"))
+# saveRDS(t_pcce05, here("output/pcce_trial05.RDS"))
+# saveRDS(t_pcce01, here("output/pcce_trial01.RDS"))
+# test <- readRDS(here("output/pcce_trial.RDS"))

@@ -37,65 +37,134 @@ library(here)
 library(doParallel)
 library(gridExtra)
 library(conflicted)
+library(viridis)
 
 conflict_prefer("filter", "dplyr")
 conflict_prefer("first", "dplyr")
+conflict_prefer("lag", "dplyr")
 
 source(here("code/dicts.R"))
 
-# All models on collection of OTHER country groups
-models <- readRDS(here("output/edgar_v7_models_all.RDS"))
-
-
-# Combination of standard functional form with and without AR
-# Note: AR = 0 column added manually to edgar_v7_EU15_plus.RDS file for model inventory
-mtest <- readRDS(here("output/edgar_v7_EU15_plus.RDS")) %>% 
-  mutate(source = "l_edgar_v7 ~ lgdp + lpop + lgdp_sq") %>% 
-  select(-c(main_title, sub_title))
-
-stand_eu15 <- readRDS(here("output/edgar_v7_EU15_plus_AR.RDS")) %>% 
-  mutate(source = "l_edgar_v7 ~ lgdp + lpop + lgdp_sq", ar = 1) %>% 
-  rbind(mtest)
-
-rm(mtest)
-
-# Additional functional forms for EU15
-# Manually combined and re-saved with growth rate models with 0.1 and 0.05 pvalues
-for_models <- readRDS(here("output/edgar_v7_EU15_plus_formulas.RDS")) %>% arrange(p_val) %>% 
-  mutate(controls = case_when(grepl("~ lgdp + lpop + lgdp_sq + HDD16dailybypop + CDD18dailybypop", source, fixed = TRUE) ~ "w/ Temp Controls",
-                          grepl("~ lpop + HDD16dailybypop + CDD18dailybypop", source, fixed = TRUE) ~ "Temp & Pop Only",
-                          TRUE ~ "Standard Controls"),
-                        func = case_when(grepl("^l_edgar_v7", source) ~ "Levels",
-                        grepl("^d.l_edgar_v7", source) ~ "First-diffs",
-                        grepl("^g.l_edgar_v7", source) ~ "Growth rates"))
-
-#readRDS("output/models_growthrates_05_1_p.RDS") %>% rbind(for_models) %>% saveRDS(here("output/edgar_v7_EU15_plus_formulas.RDS"))
-
-
-# Models with ETS dummies
-ets <- readRDS(here("output/models_ets_trials.RDS")) %>% 
-  rbind(readRDS(here("output/models_ets_trials_incl05.RDS"))) %>% 
+# Standard models
+models <- readRDS(here("output/final_results/standard_models.RDS")) %>% 
   mutate(ets_05 = ifelse(grepl("EU_ETS_05", source), 1, 0),
          ets_08 = ifelse(grepl("EU_ETS_08", source), 1, 0),
          ets_13 = ifelse(grepl("EU_ETS_13", source), 1, 0),
          ets_yes = ets_05 + ets_08 + ets_13,
-         controls = case_when(grepl("~ lgdp + lpop + lgdp_sq + HDD16dailybypop + CDD18dailybypop", source, fixed = TRUE) ~ "w/ Temp Controls",
-                          grepl("~ lpop + HDD16dailybypop + CDD18dailybypop", source, fixed = TRUE) ~ "Temp & Pop Only",
-                          TRUE ~ "Standard Controls"),
          func = case_when(grepl("^l_edgar_v7", source) ~ "Levels",
-                        grepl("^d.l_edgar_v7", source) ~ "First-diffs",
-                        grepl("^g.l_edgar_v7", source) ~ "Growth rates"))
+                        grepl("^d.l_edgar_v7", source) ~ "Growth rates"))
 
-ets_2000 <- readRDS(here("output/models_ets_trials_2000.RDS"))
+# Standard models with weather controls
+weather_models <- readRDS(here("output/final_results/weather_calc_dd_models.RDS")) %>% 
+  mutate(ets_05 = ifelse(grepl("EU_ETS_05", source), 1, 0),
+         ets_08 = ifelse(grepl("EU_ETS_08", source), 1, 0),
+         ets_13 = ifelse(grepl("EU_ETS_13", source), 1, 0),
+         ets_yes = ets_05 + ets_08 + ets_13,
+         func = case_when(grepl("^l_edgar_v7", source) ~ "Levels",
+                        grepl("^d.l_edgar_v7", source) ~ "Growth rates"))
+
+# Growth rate models with higher p-values
+gr_models <- readRDS(here("output/final_results/growth_rate_high_pval.RDS"))
+
+# CFESIS Attempts
+cfesis_models <- readRDS(here("output/final_results/cfesis_models_Xtemp_XETS.RDS"))
+
+```
+# Overview: 
+All models below were executed with impulse indicator saturation (IIS) enabled and a block size of 20. In order to avoid endless output, where reasonable, we present only the model specifications with all three ETS phase dummies (2005, 2008, 2013), a p-value threshold of 0.01, and spanning 2019-2021.
+ 
+*Country sample:* EU-15, United States, Canada, New Zealand, Australia, Japan, Switzerland
+
+
+## Corrections since 18.10 {.tabset}
+*Updates:*    
+- Updated GDP indicator from current US\$ to constant 2015 US\$ prices   
+- Manual calculation of population-weighted HDD (16 degree threshold) and CDD (18 degree threshold) 
+
+```{r, include = FALSE, echo = FALSE}
+
+data <- readRDS(here("data/out/elec_emissions_panel_clean_22.RDS"))
+
+dfi <- data %>% 
+  mutate(gdp_sq = gdp^2,
+         gdp_wb_sq = gdp_const^2,
+         gdp_oecd_sq = gdp_const_oecd^2,
+         lpop = log(pop),
+         lgdp = log(gdp),
+         lgdp_wb = log(gdp_const),
+         lgdp_oecd = log(gdp_const_oecd),
+         lgdp_sq = log(gdp)^2,
+         lgdp_wb_sq = log(gdp_const)^2,
+         lgdp_oecd_sq = log(gdp_const_oecd)^2, 
+         edgar_v7_elec_ktco2 = edgar_v7_elec_mtco2*1000,
+         l_edgar_v7 = log(edgar_v7_elec_ktco2),
+         owid_1_elec_heat_ktco2e = owid_1_elec_heat_tco2e/1000,
+         owid_2_elec_ktco2e = owid_2_elec_mtco2e*1000,
+         bp_energy_ktco2 = bp_energy_mtco2*1000)
+
+df <- dfi %>% group_by(country) %>%
+  # Lags (3), first-difference (growth rate = fd in log) (EDGAR V7), lgdp (WB current, WB constant 2015, OECD constant 2015), lpop, lgdp_sq (WB current, WB constant 2015, OECD constant 2015)
+  mutate(across(c(l_edgar_v7, lgdp, lgdp_wb, lgdp_oecd, lpop, lgdp_sq, lgdp_wb_sq, lgdp_oecd_sq), list(l1 = ~lag(.x, n = 1L),
+         l2 = ~lag(.x, n = 2L),
+         l3 = ~lag(.x, n = 3L), 
+         d = ~c(NA, diff(.x, differences = 1))),
+          #g = ~(c(NA, diff(.x, differences = 1))/lag(.x, n = 1L))*100),
+         .names = "{.fn}.{.col}")) %>% 
+  mutate(EU_ETS_05 = ifelse(country %in% EU15 & year >= 2005, 1, 0),
+         EU_ETS_08 = ifelse(country %in% EU15 & year >= 2008, 1, 0),
+         EU_ETS_13 = ifelse(country %in% EU15 & year >= 2013, 1, 0))
+         
+```
+
+### CDD/HDD calculation {.tabset}
+```{r, echo = FALSE, cache = TRUE, warning = FALSE, fig.height=8, fig.width = 10}
+
+df %>% 
+  filter(country %in% sel & year >= 1990) %>% 
+  select(year, country, cdd, hdd, HDD16dailybypop, CDD18dailybypop) %>% 
+  pivot_longer(cols = !c(year, country), names_to = "cat", values_to = "n") %>% 
+  mutate(cat = case_when(
+    cat == "cdd" ~ "CDD(18) - calculated",
+    cat == "hdd" ~ "HDD(16) - calculated",
+    cat == "HDD16dailybypop" ~ "HDD(16) - IEA",
+    cat == "CDD18dailybypop" ~ "CDD(18) - IEA",
+  )) %>% 
+  ggplot(aes(x = year, y = n, color = cat)) +
+           geom_line() +
+           facet_wrap(vars(country), scales = "free") +
+  xlab("Year") +
+  ylab("Population-weighted degree days") +
+  ggtitle("Comparison of CDD/HDD coverage") +
+  scale_color_discrete(name = "Series", 
+                       type = c( RColorBrewer::brewer.pal(9, "YlGnBu")[c(5,9)], 
+RColorBrewer::brewer.pal(9, "YlOrRd")[c(5,8)]))
+
 
 ```
 
-# Overview
 
-All models below were executed with impulse indicator saturation (IIS) enabled and a block size of 20. In order to avoid endless output, where reasonable, I present only the model specifications with all three ETS phase dummies (2005, 2008, 2013), a p-value threshold of 0.01, and spanning 2019-2021.
- 
-Country sample: EU-15, United States, Canada, New Zealand, Australia, Japan, Switzerland
+### GDP correction {.tabset}
+```{r, echo = FALSE, cache = TRUE, warning = FALSE, fig.height=8, fig.width = 10}
+f <- function(k) {
+        step <- k
+        function(y) seq(floor(min(y)), ceiling(max(y)), by = step)       
+}
 
+df %>% 
+  filter(country %in% sel & year >= 1990) %>% 
+  ggplot() +
+  geom_line(aes(x = year, y = lgdp, color = "GDP Current prices - WB (original)")) +
+  geom_line(aes(x = year, y = lgdp_oecd, color = "GDP Constant 2015 prices - OECD")) +
+  geom_line(aes(x = year, y = lgdp_wb, color = "GDP Constant 2015 prices - WB"), linetype = "dashed") +
+  facet_wrap(vars(country), scales = "free") +
+  scale_color_discrete(name = "Series", type = c("#E88471", "#045275", "#DC3977")) +
+  xlab("Year") +
+  ylab("log US$") +
+  ggtitle("Comparison of GDP metrics") +
+  scale_x_continuous(breaks = f(10)) +
+  theme(legend.position="bottom")
+  
+```
 
 ```{r, echo = FALSE, include = FALSE}
 
@@ -109,14 +178,15 @@ gen_p <- function(df){
     pull(is) %>% 
     first() %>% 
     plot(zero_line = FALSE) +
-        ggtitle(label = mt, subtitle = st)
+        ggtitle(label = mt, subtitle = st) +
+  scale_x_continuous(breaks = f(10))
     
     pg <- df %>% 
     slice(i) %>% 
     pull(is) %>% 
     first() %>% 
     plot_grid() +
-      ggtitle(label = mt, subtitle = st)
+      ggtitle(label = mt, subtitle = st) 
     
     grid.arrange(pl, pg, ncol = 2)
 
@@ -138,7 +208,8 @@ gen_p_only <- function(df){
     slice(i) %>% 
     pull(is) %>% 
     first() %>% 
-    plot(zero_line = FALSE) 
+    plot(zero_line = FALSE) +
+  scale_x_continuous(breaks = f(10))
     
     print(pl +
         ggtitle(label = mt, subtitle = st))
@@ -152,43 +223,43 @@ gen_p_only <- function(df){
     }}
 }
 
-pull_m <- function(df, yr, p, i, a, con = NULL, f = NULL){
-  if(is.null(con) & is.null(f)){
-  df %>%
-    filter(year_range == yr &
-             p_val == p &
-           iis == i &
-           ar == a) %>% pull(is) %>% first()
-  }else{
-    df %>%
-    filter(year_range == yr &
-             p_val == p &
-           iis == i &
-           ar == a &
-             controls == con &
-             func == f) %>% pull(is) %>% first()
-  }
-}
-
-pull_f <- function(df, src, yr, p, i, a, con = NULL, f = NULL){
-  if(is.null(con) & is.null(f)){
-  df %>%
-    filter(source == src &
-             year_range == yr &
-             p_val == p &
-           iis == i &
-           ar == a) %>% pull(is) %>% first()
-  }else{
-    df %>%
-    filter(source == src &
-             year_range == yr &
-             p_val == p &
-           iis == i &
-           ar == a &
-             controls == con &
-             func == f) %>% pull(is) %>% first()
-  }
-}
+# pull_m <- function(df, yr, p, i, a, con = NULL, f = NULL){
+#   if(is.null(con) & is.null(f)){
+#   df %>%
+#     filter(year_range == yr &
+#              p_val == p &
+#            iis == i &
+#            ar == a) %>% pull(is) %>% first()
+#   }else{
+#     df %>%
+#     filter(year_range == yr &
+#              p_val == p &
+#            iis == i &
+#            ar == a &
+#              controls == con &
+#              func == f) %>% pull(is) %>% first()
+#   }
+# }
+# 
+# pull_f <- function(df, src, yr, p, i, a, con = NULL, f = NULL){
+#   if(is.null(con) & is.null(f)){
+#   df %>%
+#     filter(source == src &
+#              year_range == yr &
+#              p_val == p &
+#            iis == i &
+#            ar == a) %>% pull(is) %>% first()
+#   }else{
+#     df %>%
+#     filter(source == src &
+#              year_range == yr &
+#              p_val == p &
+#            iis == i &
+#            ar == a &
+#              controls == con &
+#              func == f) %>% pull(is) %>% first()
+#   }
+# }
 
 ######################### Emergency extractors ##############################
 # w2000ets %>% pull_f(src = "l_edgar_v7 ~ lgdp + lpop + lgdp_sq + HDD16dailybypop + CDD18dailybypop + EU_ETS_05 + EU_ETS_08 + EU_ETS_13", 
@@ -246,10 +317,18 @@ pull_f <- function(df, src, yr, p, i, a, con = NULL, f = NULL){
 
 ```{r, echo = FALSE}
 
-st_level <- stand_eu15 %>% filter(p_val != 0.05 & iis == TRUE & b_size == 20 & ar == 0) %>% 
-  mutate(source = "l_edgar_v7 ~ lgdp + lpop + lgdp_sq")
+models %>% filter(func == "Levels" & year_range == "1990:2021" & ar == 0 & ets_yes == 0 & b_size == 20 & p_val %in% c(0.01, 0.001)) %>% gen_p(.)
 
-st_level %>% filter(year_range == "1990:2021") %>% gen_p(.)
+```
+
+##### CCE {.tabset}
+*Note:* This is a preliminary implementation of the Common Correlated Effects estimator following the method outlined in the code sample provided by Felix a few weeks ago. The manual implementation using *plm* and the dedicated *pcce* function (both from the *plm* package in R) yield identical coefficient estimates to the fourth decimal place. We are concerned about this discrepancy.
+
+I will provide more in-depth updates in the meeting. Mainly, it would be great to get more eyes on these results and the implementation to ensure minimal errors!
+
+```{r, echo = FALSE, cache = TRUE}
+
+readRDS(here("output/final_results/pcce_models.RDS")) %>% gen_p(.)
 
 ```
 
@@ -257,127 +336,143 @@ st_level %>% filter(year_range == "1990:2021") %>% gen_p(.)
 
 ```{r, echo = FALSE}
 
-st_lev_ar <- stand_eu15 %>%
-  filter(p_val != 0.05 & iis == TRUE, b_size == 20 & ar == 1) %>%
-  mutate(source = "l_edgar_v7 ~ lgdp + lpop + lgdp_sq")
-
-test <- st_lev_ar %>% filter(year_range == "1990:2021")
-
-for(t in 1:nrow(test)){
-  test %>% slice(t) %>% gen_p()
-}
+models %>% filter(func == "Levels" & year_range == "1990:2021" & ar == 1 & ets_yes == 0 & b_size == 20 & p_val %in% c(0.01, 0.001)) %>% gen_p(.)
 
 ```
 
 ##### ETS (all phases) {.tabset}
 ```{r, echo = FALSE, cache = TRUE}
 
-ets %>%
-  filter(func == "Levels" & controls == "Standard Controls" & ar == 0 & ets_yes == 3) %>% gen_p(.)
+models %>% filter(func == "Levels" & year_range == "1990:2021" & ar == 0 & ets_yes == 3 & b_size == 20 & p_val %in% c(0.01, 0.001)) %>% gen_p(.)
 
 ```
 
 ##### ETS (individual) {.tabset}
 ```{r, echo = FALSE, cache = TRUE}
 
-ets %>%
-  filter(func == "Levels" & controls == "Standard Controls" & ar == 0 & ets_yes == 1 & p_val == 0.01) %>% gen_p(.)
+models %>% filter(func == "Levels" & year_range == "1990:2021" & ar == 0 & ets_yes == 1 & b_size == 20 & p_val == 0.001) %>% gen_p(.)
 
 ```
-
 
 ##### ETS (pairs) {.tabset}
 ```{r, echo = FALSE, cache = TRUE}
 
-ets %>%
-  filter(func == "Levels" & controls == "Standard Controls" & ar == 0 & ets_yes == 2 & p_val == 0.01) %>% gen_p(.)
+models %>% filter(func == "Levels" & year_range == "1990:2021" & ar == 0 & ets_yes == 2 & b_size == 20 & p_val == 0.001) %>% gen_p(.)
 
 ```
 
 #### 2000-2021 {.tabset}
 ##### AR = 0 {.tabset}
 
-```{r, echo = FALSE, cache = TRUE}
+```{r, echo = FALSE}
 
-st_level %>% filter(year_range == "2000:2021") %>% gen_p(.)
+models %>% filter(func == "Levels" & year_range == "2000:2021" & ar == 0 & ets_yes == 0 & b_size == 20 & p_val %in% c(0.01, 0.001)) %>% gen_p(.)
 
 ```
 
 ##### AR = 1 {.tabset}
+
 ```{r, echo = FALSE}
 
-st_lev_ar %>% filter(year_range == "2000:2021") %>% gen_p(.)
+models %>% filter(func == "Levels" & year_range == "2000:2021" & ar == 1 & ets_yes == 0 & b_size == 20 & p_val %in% c(0.01, 0.001)) %>% gen_p(.)
 
 ```
 
 ##### ETS (all phases) {.tabset}
 ```{r, echo = FALSE, cache = TRUE}
 
-ets_2000 %>% filter(ar == 0) %>% gen_p(.)
+models %>% filter(func == "Levels" & year_range == "2000:2021" & ar == 0 & ets_yes == 3 & b_size == 20 & p_val %in% c(0.01, 0.001)) %>% gen_p(.)
+
+```
+
+##### ETS (individual) {.tabset}
+```{r, echo = FALSE, cache = TRUE}
+
+models %>% filter(func == "Levels" & year_range == "2000:2021" & ar == 0 & ets_yes == 1 & b_size == 20 & p_val == 0.001) %>% gen_p(.)
+
+```
+
+##### ETS (pairs) {.tabset}
+```{r, echo = FALSE, cache = TRUE}
+
+models %>% filter(func == "Levels" & year_range == "2000:2021" & ar == 0 & ets_yes == 2 & b_size == 20 & p_val == 0.001) %>% gen_p(.)
 
 ```
 
 ### w/ Temp Controls {.tabset}
 
-2000 - 2021: population-weighted CDD and HDD from IEA  
-
-*Note: I have excluded the results with temp controls for 1990-2021 that you saw on Tuesday as I noted an issue with the non-EU15 countries that I'm currently working through.*
-
-#### no ETS {.tabset}
+#### 1990-2021 {.tabset}
+##### no ETS {.tabset}
 ```{r, echo = FALSE}
 
-w2000 <- readRDS(here("output/edgar_v7_EU15_plus_forms_weather_2000.RDS"))
-w2000 %>%
-  filter(grepl("lgdp_sq", source)) %>%  gen_p(.)
+weather_models %>% filter(year_range == "1990:2021" & ar == 0 & p_val %in% c(0.01, 0.001) & grepl("lgdp", source) & ets_yes == 0 & b_size == 20) %>% gen_p(.) 
 
 ```
 
-#### ETS (all phases) {.tabset}
+##### ETS (all phases) {.tabset}
 ```{r, echo = FALSE}
 
-w2000ets <- readRDS(here("output/models_ets_trials_weather_2000.RDS"))
-
-w2000ets %>%
-  filter(grepl("lgdp_sq", source)) %>%  gen_p(.)
+weather_models %>% filter(year_range == "1990:2021" & ar == 0 & p_val %in% c(0.01, 0.001) & grepl("lgdp", source) & ets_yes == 3 & b_size == 20) %>% gen_p(.) 
 
 ```
 
+#### 2000-2021 {.tabset}
+##### no ETS {.tabset}
+```{r, echo = FALSE}
+
+weather_models %>% filter(year_range == "2000:2021" & ar == 0 & p_val %in% c(0.01, 0.001) & grepl("lgdp", source) & ets_yes == 0 & b_size == 20) %>% gen_p(.) 
+
+```
+
+##### ETS (all phases) {.tabset}
+```{r, echo = FALSE}
+
+weather_models %>% filter(year_range == "2000:2021" & ar == 0 & p_val %in% c(0.01, 0.001) & grepl("lgdp", source) & ets_yes == 3 & b_size == 20) %>% gen_p(.) 
+
+```
 
 ### Temp & Pop Only {.tabset}
 
-2000 - 2021: population-weighted CDD and HDD from IEA  
-
-*Note: I have excluded the results with temp controls for 1990-2021 that you saw on Monday as I noted an issue with the non-EU15 countries that I'm currently working through.*
-
-#### no ETS {.tabset}
+#### 1990-2021 {.tabset}
+##### no ETS {.tabset}
 ```{r, echo = FALSE}
 
-
-w2000 %>%
-  filter(!grepl("lgdp_sq", source)) %>%  gen_p(.)
+weather_models %>% filter(year_range == "1990:2021" & ar == 0 & p_val %in% c(0.01, 0.001) & !grepl("lgdp", source) & ets_yes == 0 & b_size == 20) %>% gen_p(.) 
 
 ```
 
-#### ETS (all phases) {.tabset}
+##### ETS (all phases) {.tabset}
 ```{r, echo = FALSE}
 
+weather_models %>% filter(year_range == "1990:2021" & ar == 0 & p_val %in% c(0.01, 0.001) & !grepl("lgdp", source) & ets_yes == 3 & b_size == 20) %>% gen_p(.) 
 
-w2000ets %>%
-  filter(!grepl("lgdp_sq", source)) %>%  gen_p(.)
+```
+
+#### 2000-2021 {.tabset}
+##### no ETS {.tabset}
+```{r, echo = FALSE}
+
+weather_models %>% filter(year_range == "2000:2021" & ar == 0 & p_val %in% c(0.01, 0.001) & !grepl("lgdp", source) & ets_yes == 0 & b_size == 20) %>% gen_p(.) 
+
+```
+
+##### ETS (all phases) {.tabset}
+```{r, echo = FALSE}
+
+weather_models %>% filter(year_range == "2000:2021" & ar == 0 & p_val %in% c(0.01, 0.001) & !grepl("lgdp", source) & ets_yes == 3 & b_size == 20) %>% gen_p(.) 
 
 ```
 
 
 ## Growth Rates {.tabset}
-*Note: As Moritz mentioned on Tuesday, when looking at growth rates what we understand as "breaks" are represented by the grey impulse lines. I have therefore excluded the plots analogous to the right-hand ones above.*
+*Note: As Moritz mentioned, when looking at growth rates what we understand as "breaks" are represented by the grey impulse lines. I have therefore excluded the plots analogous to the right-hand ones above.*
 
 ### AR = 0 {.tabset}
 #### p = 0.1 {.tabset}
 
 ```{r, echo = FALSE, cache = TRUE}
 
-for_models %>%
-  filter(func == "First-diffs" & ar == 0 & p_val == 0.1 & year_range == "1990:2021") %>% gen_p_only(.)
+gr_models %>% filter(year_range == "1990:2021" & b_size == 20 & ar == 0) %>% gen_p_only(.)
 
 ```
 
@@ -385,8 +480,7 @@ for_models %>%
 
 ```{r, echo = FALSE, cache = TRUE}
 
-for_models %>%
-  filter(func == "First-diffs" & ar == 0 & p_val == 0.05 & year_range == "1990:2021") %>% gen_p_only(.)
+models %>% filter(func == "Growth rates" & year_range == "1990:2021" & p_val == 0.05 & b_size == 20 & ar == 0 & ets_yes == 0) %>% gen_p_only(.)
 
 ```
 
@@ -394,8 +488,7 @@ for_models %>%
 
 ```{r, echo = FALSE, cache = TRUE}
 
-for_models %>%
-  filter(func == "First-diffs" & ar == 0 & p_val == 0.01 & year_range == "1990:2021") %>% gen_p_only(.)
+models %>% filter(func == "Growth rates" & year_range == "1990:2021" & p_val == 0.01 & b_size == 20 & ar == 0 & ets_yes == 0) %>% gen_p_only(.)
 
 ```
 
@@ -403,8 +496,7 @@ for_models %>%
 
 ```{r, echo = FALSE, cache = TRUE}
 
-for_models %>%
-  filter(func == "First-diffs" & ar == 0 & p_val == 0.001 & year_range == "1990:2021") %>% gen_p_only(.)
+models %>% filter(func == "Growth rates" & year_range == "1990:2021" & p_val == 0.001 & b_size == 20 & ar == 0 & ets_yes == 0) %>% gen_p_only(.)
 
 ```
 
@@ -412,31 +504,130 @@ for_models %>%
 #### p = 0.1 {.tabset}
 ```{r, echo = FALSE, cache = TRUE}
 
-for_models %>%
-  filter(func == "First-diffs" & ar == 1 & p_val == 0.1 & year_range == "1990:2021") %>% gen_p_only(.)
+gr_models %>% filter(year_range == "1990:2021" & b_size == 20 & ar == 1) %>% gen_p_only(.)
 
 ```
 
 #### p = 0.05 {.tabset}
+
 ```{r, echo = FALSE, cache = TRUE}
 
-for_models %>%
-  filter(func == "First-diffs" & ar == 1 & p_val == 0.05 & year_range == "1990:2021") %>% gen_p_only(.)
+models %>% filter(func == "Growth rates" & year_range == "1990:2021" & p_val == 0.05 & b_size == 20 & ar == 1 & ets_yes == 0) %>% gen_p_only(.)
 
 ```
 
 #### p = 0.01 {.tabset}
+
 ```{r, echo = FALSE, cache = TRUE}
 
-for_models %>%
-  filter(func == "First-diffs" & ar == 1 & p_val == 0.01 & year_range == "1990:2021") %>% gen_p_only(.)
+models %>% filter(func == "Growth rates" & year_range == "1990:2021" & p_val == 0.01 & b_size == 20 & ar == 1 & ets_yes == 0) %>% gen_p_only(.)
 
 ```
 
 #### p = 0.001 {.tabset}
+
 ```{r, echo = FALSE, cache = TRUE}
 
-for_models %>%
-  filter(func == "First-diffs" & ar == 1 & p_val == 0.001 & year_range == "1990:2021") %>% gen_p_only(.)
+models %>% filter(func == "Growth rates" & year_range == "1990:2021" & p_val == 0.001 & b_size == 20 & ar == 1 & ets_yes == 0) %>% gen_p_only(.)
+
+```
+
+
+## Testing CFESIS (levels) {.tabset}
+Coefficient Fixed Effect Step Indicator Saturation (breaks in the coefficient estimate on the controls for each individual country)   
+
+*Question:* My current interpretation of these steps (denoted in the graph below by the vertical green bars) is potentially a change in emission intensity of GDP (decoupling) and emission intensity of population/people? Unsure if this is accurate. Curious for a discussion on this.
+
+### p = 0.001 {.tabset}
+
+```{r, echo = FALSE, cache = TRUE}
+cfesis_models %>% filter(p_val == 0.001) %>% gen_p_only(.)
+
+```
+
+### p = 0.01 {.tabset}
+
+```{r, echo = FALSE, cache = TRUE}
+cfesis_models %>% filter(p_val == 0.01) %>% gen_p_only(.)
+```
+
+
+```{r, echo = FALSE, include = FALSE, eval = FALSE}
+## Testing TIS (levels) {.tabset}
+# Trend indicator saturation. Not sure how to interpret the output here.
+# 
+# sel = sample of EU15 and selected countries
+
+data <- readRDS(here("data/out/elec_emissions_panel_clean_22.RDS"))
+
+dfi <- data %>% 
+  mutate(gdp_sq = gdp^2,
+         gdp_wb_sq = gdp_const^2,
+         gdp_oecd_sq = gdp_const_oecd^2,
+         lpop = log(pop),
+         lgdp = log(gdp),
+         lgdp_wb = log(gdp_const),
+         lgdp_oecd = log(gdp_const_oecd),
+         lgdp_sq = log(gdp)^2,
+         lgdp_wb_sq = log(gdp_const)^2,
+         lgdp_oecd_sq = log(gdp_const_oecd)^2, 
+         edgar_v7_elec_ktco2 = edgar_v7_elec_mtco2*1000,
+         l_edgar_v7 = log(edgar_v7_elec_ktco2),
+         owid_1_elec_heat_ktco2e = owid_1_elec_heat_tco2e/1000,
+         owid_2_elec_ktco2e = owid_2_elec_mtco2e*1000,
+         bp_energy_ktco2 = bp_energy_mtco2*1000)
+
+df <- dfi %>% group_by(country) %>%
+  # Lags (3), first-difference (growth rate = fd in log) (EDGAR V7), lgdp (WB current, WB constant 2015, OECD constant 2015), lpop, lgdp_sq (WB current, WB constant 2015, OECD constant 2015)
+  mutate(across(c(l_edgar_v7, lgdp, lgdp_wb, lgdp_oecd, lpop, lgdp_sq, lgdp_wb_sq, lgdp_oecd_sq), list(l1 = ~lag(.x, n = 1L),
+         l2 = ~lag(.x, n = 2L),
+         l3 = ~lag(.x, n = 3L), 
+         d = ~c(NA, diff(.x, differences = 1))),
+          #g = ~(c(NA, diff(.x, differences = 1))/lag(.x, n = 1L))*100),
+         .names = "{.fn}.{.col}")) %>% 
+  mutate(EU_ETS_05 = ifelse(country %in% EU15 & year >= 2005, 1, 0),
+         EU_ETS_08 = ifelse(country %in% EU15 & year >= 2008, 1, 0),
+         EU_ETS_13 = ifelse(country %in% EU15 & year >= 2013, 1, 0))
+         
+```
+
+
+```{r, cache = TRUE, message = FALSE, include = FALSE, eval = FALSE}
+### p = 0.001 {.tabset}
+tis <- df %>%
+      filter(country %in% sel & year >= 1990) %>% 
+      isatpanel(data = .,
+            formula = "l_edgar_v7 ~ lgdp_wb + lpop + lgdp_wb_sq",
+            index = c("country", "year"),
+            effect = "twoways",
+            iis = TRUE,
+            fesis = TRUE,
+            tis = TRUE,
+            t.pval = 0.001,
+            max.block.size = 20)
+
+print(tis)
+plot(tis, zero_line = FALSE)
+
+```
+
+
+
+```{r, cache = TRUE, message = FALSE, include = FALSE, eval = FALSE}
+### p = 0.01 {.tabset}
+tis <- df %>%
+      filter(country %in% sel & year >= 1990) %>% 
+      isatpanel(data = .,
+            formula = "l_edgar_v7 ~ lgdp_wb + lpop + lgdp_wb_sq",
+            index = c("country", "year"),
+            effect = "twoways",
+            iis = TRUE,
+            fesis = TRUE,
+            tis = TRUE,
+            t.pval = 0.01,
+            max.block.size = 20)
+
+print(tis)
+plot(tis, zero_line = FALSE)
 
 ```
