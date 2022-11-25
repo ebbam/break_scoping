@@ -23,6 +23,7 @@ library(stringr)
 library(janitor)
 library(plm)
 library(pdftools)
+library(lubridate)
 conflict_prefer_all("dplyr", quiet = TRUE)
 
 ```
@@ -339,7 +340,7 @@ owid_elec <- owid_all %>%
          energy_cons_change_twh, carbon_intensity_elec, primary_energy_consumption,
          energy_per_gdp, energy_per_capita, net_elec_imports_share_demand,
          net_elec_imports, contains("low_carbon"), contains("renewable"), 
-         contains("fossil")) %>% mutate(country = ifelse(country %in% names(getcountry), unname(getcountry[country]), country)) %>% 
+         contains("fossil"), contains("share_elec")) %>% mutate(country = ifelse(country %in% names(getcountry), unname(getcountry[country]), country)) %>% 
   mutate(country = ifelse(country == "USSR" & year < 1985, "Russia", ifelse(country == "Taiwan", "Chinese Taipei", country))) %>% 
   filter(!(country %in% c("Africa", "Antarctica", "Asia Pacific", "Eastern Africa", "Europe", "European Union (27)", "Hawaiian Trade Zone", "Middle Africa", "Middle East", "Non-OECD", "OECD", "U.S. Territories", "Western Africa", "World", "Yugoslavia", "Czechoslovakia", "U.S. Pacific Islands", "East Germany", "West Germany", "CIS", "Wake Island", "USSR")) & year >= 1965)
 
@@ -860,15 +861,13 @@ dd_comp_aus_us_can <- us_dd_tot %>% rbind(., can_dd_tot) %>% rename(n = dd_tot) 
 dd_comp_aus_us_can$n[which(dd_comp_aus_us_can$country == "Australia" & dd_comp_aus_us_can$year %in% 1990:2019)] <- aus_dd_tot$dd_tot
 
 # Incorporating values for 2020-2021
-dd_20_21 <- if(readRDS(here("data/out/elec_emissions_panel_clean_22.RDS")) %>% select(1:106) %>% identical(full_gdp)){
-  readRDS(here("data/out/elec_emissions_panel_clean_22.RDS")) %>% filter(country %in% sel & year >= 2020) %>% select(year, country, HDD16dailybypop, CDD18dailybypop) %>% rename(hdd = HDD16dailybypop, cdd = CDD18dailybypop) %>% pivot_longer(cols = !c(country, year), names_to = 'cat', values_to = 'n')
-}else{break}
+dd_20_21 <- readRDS(here("data/out/elec_emissions_panel_clean_22.RDS")) %>% filter(country %in% sel & year >= 2020) %>% select(year, country, HDD16dailybypop, CDD18dailybypop) %>% rename(hdd = HDD16dailybypop, cdd = CDD18dailybypop) %>% pivot_longer(cols = !c(country, year), names_to = 'cat', values_to = 'n')
 
 # Merge with main dataset
 data_dd_full <- rbind(dd_20_21, dd_comp_aus_us_can) %>% pivot_wider(id_cols = c(year, country), names_from = cat, values_from = n) %>%  left_join(full_gdp, ., by = c('year', 'country'))
 
 # Sanity check
-data_dd_full %>% select(1:106) %>% identical(full_gdp)
+data_dd_full %>% select(1:114) %>% identical(full_gdp)
 
 data_dd_full %>% filter(country %in% sel & year >= 1990) %>% 
   select(year, country, hdd, cdd, HDD16dailybypop, CDD18dailybypop) %>% 
@@ -877,9 +876,11 @@ data_dd_full %>% filter(country %in% sel & year >= 1990) %>%
   geom_line(aes(x = year, y = n, color = cat)) + 
   facet_wrap(vars(country), scales = "free")
 
-#saveRDS(data_dd_full, here("data/out/elec_emissions_panel_clean_22.RDS"))
+
 
 readRDS(here("data/out/elec_emissions_panel_clean_22.RDS")) %>% identical(data_dd_full)
+
+#saveRDS(data_dd_full, here("data/out/elec_emissions_panel_clean_22.RDS"))
 
 ```
 
