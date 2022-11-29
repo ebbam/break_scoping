@@ -45,6 +45,7 @@ conflict_prefer("lag", "dplyr")
 
 source(here("code/dicts.R"))
 
+
 # Standard models
 models <- readRDS(here("output/final_results/standard_models.RDS")) %>% 
   mutate(ets_05 = ifelse(grepl("EU_ETS_05", source), 1, 0),
@@ -63,6 +64,8 @@ weather_models <- readRDS(here("output/final_results/weather_calc_dd_models.RDS"
          func = case_when(grepl("^l_edgar_v7", source) ~ "Levels",
                         grepl("^d.l_edgar_v7", source) ~ "Growth rates"))
 
+#weather_models[-5] %>% group_by(source) %>% summarise(across(everything(), list(all = ~ paste(unique(.x), collapse = ",")))) %>% View()
+
 # Growth rate models with higher p-values
 gr_models <- readRDS(here("output/final_results/growth_rate_high_pval.RDS"))
 
@@ -73,7 +76,8 @@ cfesis_models <- readRDS(here("output/final_results/cfesis_models_Xtemp_XETS.RDS
 # Overview: 
 All models below were executed with impulse indicator saturation (IIS) enabled and a block size of 20. In order to avoid endless output, where reasonable, we present only the model specifications with all three ETS phase dummies (2005, 2008, 2013), a p-value threshold of 0.01, and spanning 2019-2021.
  
-*Country sample:* EU-15, United States, Canada, New Zealand, Australia, Japan, Switzerland
+*Country sample 1:* EU-15, United States, Canada, New Zealand, Australia, Japan, Switzerland     
+*Country sample 2:* EU-15 (not including Luxembourg), United States, Canada, New Zealand, Australia, Japan, Switzerland
 
 
 ## Corrections since 18.10 {.tabset}
@@ -130,7 +134,7 @@ df %>%
     cat == "CDD18dailybypop" ~ "CDD(18) - IEA",
   )) %>% 
   ggplot(aes(x = year, y = n, color = cat)) +
-           geom_line() +
+           geom_line(na.rm = TRUE) +
            facet_wrap(vars(country), scales = "free") +
   xlab("Year") +
   ylab("Population-weighted degree days") +
@@ -165,6 +169,54 @@ df %>%
   theme(legend.position="bottom")
   
 ```
+
+## Energy shares {.tabset}
+### Energy shares {.tabset}
+Share of electricity generation by source     
+Source: OWID via BP Statistical Review of World Energy and Ember Global and European Electricity Review
+
+```{r, echo = FALSE, cache = TRUE, warning = FALSE, fig.height=8, fig.width = 10} 
+
+df %>% 
+  select(country, year, 
+         #low_carbon_share_elec,
+         #renewables_share_elec,
+         #other_renewables_share_elec,
+         #other_renewables_share_elec_exc_biofuel,
+         biofuel_share_elec,
+         #fossil_share_elec,
+         coal_share_elec,
+         oil_share_elec,
+         gas_share_elec,
+         nuclear_share_elec,
+         solar_share_elec,
+         wind_share_elec,
+         hydro_share_elec
+         ) %>% 
+  filter(country %in% sel & year >=1990) %>% 
+  pivot_longer(!c(country, year), names_to = 'source', values_to = 'share') %>%
+  ggplot(aes(x = year, y = share, color = source)) +
+  geom_line(na.rm = TRUE) +
+  facet_wrap(~country, scales = "free")
+
+```
+
+### Electricity generation per source (TWH) {.tabset}
+Additional option: Electricity generation by source, measured in terawatt-hours      
+Source: OWID via BP Statistical Review of World Energy and Ember Global and European Electricity Review    
+Can be disaggregated by same sources as share data
+```{r, echo = FALSE, cache = TRUE, warning = FALSE, fig.height=8, fig.width = 10}
+
+df %>% 
+  select(country, year, low_carbon_electricity, renewables_electricity, fossil_electricity) %>% 
+  filter(country %in% sel & year >=1990) %>% 
+  pivot_longer(!c(country, year), names_to = 'source', values_to = 'elect_twh') %>%
+  ggplot(aes(x = year, y = elect_twh, color = source)) +
+  geom_line(na.rm = TRUE) +
+  facet_wrap(~country, scales = "free")
+
+```
+
 
 ```{r, echo = FALSE, include = FALSE}
 
@@ -221,6 +273,66 @@ gen_p_only <- function(df){
     pull(is) %>%
     first() %>% print()
     }}
+}
+
+# Panel of models: indicators to plot generator
+
+convert <- function(mod, modname = character()){
+  x <- mod
+df <- x$estimateddata
+  indicators <- x$isatpanel.result$aux$mX
+  indicators <- indicators[,!colnames(indicators) %in% names(df)]
+  indicators <- indicators[,!grepl("^id|^time",colnames(indicators))]
+  df <- cbind(df,indicators)
+
+
+    if(is.null(x$isatpanel.result$fit)){
+      fitted <- as.numeric(x$isatpanel.result$mean.fit)
+    } else {
+      fitted <- as.numeric(x$isatpanel.result$fit)
+    }
+
+    indicators_df <- cbind(df[,names(df) %in% c("id","time")],indicators)
+    varying_vars <- names(indicators_df)[!names(indicators_df)%in% c("id","time","y","fitted")]
+
+    indicators_l <- reshape(indicators_df,
+                            varying = varying_vars,
+                            idvar = c("id","time"),
+                            v.names = "value",
+                            timevar = "name",
+                            times = varying_vars,
+                            direction = "long")
+
+    # introduce facets
+    default_facet_name <- "Intercept (IIS, FESIS)"
+    indicators_l$facet <- default_facet_name
+
+    # Deal with CSIS within facets
+    indicators_l[grepl("\\.csis[0-9]+",indicators_l$name),"value"] <- ifelse(indicators_l[grepl("\\.csis[0-9]+",indicators_l$name),"value"] != 0, 1, 0)
+    indicators_l[grepl("\\.csis[0-9]+",indicators_l$name),"facet"] <- paste0("CSIS: ",gsub("\\.csis[0-9]+","",indicators_l[grepl("\\.csis[0-9]+",indicators_l$name),"name"]))
+
+    # Deal with CFESIS within facets
+    indicators_l[grepl("\\.cfesis[0-9]+",indicators_l$name),"value"] <- ifelse(indicators_l[grepl("\\.cfesis[0-9]+",indicators_l$name),"value"] != 0, 1, 0)
+    indicators_l[grepl("\\.cfesis[0-9]+",indicators_l$name),"facet"] <- paste0("CFESIS: ",gsub("\\.[0-9]+$","",gsub("\\.cfesis[0-9]+","",indicators_l[grepl("\\.cfesis[0-9]+",indicators_l$name),"name"])))
+
+    # Control the order of the facets
+    facet_order <- unique(indicators_l$facet)
+    facet_order <- c(default_facet_name, facet_order[!facet_order %in% default_facet_name])
+    indicators_l$facet <- factor(indicators_l$facet, levels = facet_order)
+
+    indicators_l_merged <- merge(indicators_l,
+                                 data.frame(name = names(coef(x$isatpanel.result)),
+                                            coef = coef(x$isatpanel.result)),
+                                 by = "name", all.x = TRUE)
+
+    indicators_l_merged$effect <-  indicators_l_merged$value*indicators_l_merged$coef
+
+    indicators_toplot <- aggregate(indicators_l_merged$effect, by = list(indicators_l_merged$time, indicators_l_merged$id, indicators_l_merged$facet), function(x){sum(x,na.rm = TRUE)})
+    names(indicators_toplot) <- c("time","id","facet","effect")
+    indicators_toplot[indicators_toplot$effect == 0,"effect"] <- NA
+
+    indicators_toplot$model <- modname 
+    return(indicators_toplot)
 }
 
 # pull_m <- function(df, yr, p, i, a, con = NULL, f = NULL){
@@ -322,13 +434,21 @@ models %>% filter(func == "Levels" & year_range == "1990:2021" & ar == 0 & ets_y
 ```
 
 ##### CCE {.tabset}
-*Note:* This is a preliminary implementation of the Common Correlated Effects estimator following the method outlined in the code sample provided by Felix a few weeks ago. The manual implementation using *plm* and the dedicated *pcce* function (both from the *plm* package in R) yield identical coefficient estimates to the fourth decimal place. We are concerned about this discrepancy.
+*Note:* This is a preliminary implementation of the Common Correlated Effects estimator following the method outlined in the code sample provided by Felix a few weeks ago. The manual implementation using *plm* and the dedicated *pcce* function (both from the *plm* package in R) yield identical coefficient estimates to the fourth decimal place.
 
-I will provide more in-depth updates in the meeting. Mainly, it would be great to get more eyes on these results and the implementation to ensure minimal errors!
+###### CCE (ERRONEOUS TWFE) {.tabset}
 
 ```{r, echo = FALSE, cache = TRUE}
 
 readRDS(here("output/final_results/pcce_models.RDS")) %>% gen_p(.)
+
+```
+
+###### CCE (Individual Effects Only) {.tabset}
+
+```{r, echo = FALSE, cache = TRUE}
+
+readRDS(here("output/final_results/pcce_models_indeffects.RDS")) %>% gen_p(.)
 
 ```
 
@@ -402,64 +522,147 @@ models %>% filter(func == "Levels" & year_range == "2000:2021" & ar == 0 & ets_y
 ### w/ Temp Controls {.tabset}
 
 #### 1990-2021 {.tabset}
-##### no ETS {.tabset}
+##### AR = 0 {.tabset}
 ```{r, echo = FALSE}
 
 weather_models %>% filter(year_range == "1990:2021" & ar == 0 & p_val %in% c(0.01, 0.001) & grepl("lgdp", source) & ets_yes == 0 & b_size == 20) %>% gen_p(.) 
 
 ```
 
-##### ETS (all phases) {.tabset}
+##### AR = 1 {.tabset}
 ```{r, echo = FALSE}
 
-weather_models %>% filter(year_range == "1990:2021" & ar == 0 & p_val %in% c(0.01, 0.001) & grepl("lgdp", source) & ets_yes == 3 & b_size == 20) %>% gen_p(.) 
+weather_models %>% filter(year_range == "1990:2021" & ar == 1 & p_val %in% c(0.01, 0.001) & grepl("lgdp", source) & ets_yes == 0 & b_size == 20) %>% gen_p(.) 
+
+```
+
+##### ETS (all phases) {.tabset}
+```{r, echo = FALSE, cache = TRUE}
+
+weather_models %>% filter(year_range == "1990:2021" & ar == 0 & p_val %in% c(0.01, 0.001) & grepl("lgdp", source) & ets_yes == 3 & b_size == 20) %>% gen_p(.)
+
+```
+
+##### ETS (individual) {.tabset}
+```{r, echo = FALSE, cache = TRUE}
+
+weather_models %>% filter(year_range == "1990:2021" & ar == 0 & p_val == 0.001 & grepl("lgdp", source) & ets_yes == 1 & b_size == 20) %>% gen_p(.)
+
+```
+
+##### ETS (pairs) {.tabset}
+```{r, echo = FALSE, cache = TRUE}
+
+weather_models %>% filter(year_range == "1990:2021" & ar == 0 & p_val == 0.001 & grepl("lgdp", source) & ets_yes == 2 & b_size == 20) %>% gen_p(.)
 
 ```
 
 #### 2000-2021 {.tabset}
-##### no ETS {.tabset}
+##### AR = 0 {.tabset}
 ```{r, echo = FALSE}
 
 weather_models %>% filter(year_range == "2000:2021" & ar == 0 & p_val %in% c(0.01, 0.001) & grepl("lgdp", source) & ets_yes == 0 & b_size == 20) %>% gen_p(.) 
 
 ```
 
-##### ETS (all phases) {.tabset}
+##### AR = 1 {.tabset}
 ```{r, echo = FALSE}
 
-weather_models %>% filter(year_range == "2000:2021" & ar == 0 & p_val %in% c(0.01, 0.001) & grepl("lgdp", source) & ets_yes == 3 & b_size == 20) %>% gen_p(.) 
+weather_models %>% filter(year_range == "2000:2021" & ar == 1 & p_val %in% c(0.01, 0.001) & grepl("lgdp", source) & ets_yes == 0 & b_size == 20) %>% gen_p(.) 
+
+```
+
+##### ETS (all phases) {.tabset}
+```{r, echo = FALSE, cache = TRUE}
+
+weather_models %>% filter(year_range == "2000:2021" & ar == 0 & p_val %in% c(0.01, 0.001) & grepl("lgdp", source) & ets_yes == 3 & b_size == 20) %>% gen_p(.)
+
+```
+
+##### ETS (individual) {.tabset}
+```{r, echo = FALSE, cache = TRUE}
+
+weather_models %>% filter(year_range == "2000:2021" & ar == 0 & p_val == 0.001 & grepl("lgdp", source) & ets_yes == 1 & b_size == 20) %>% gen_p(.)
+
+```
+
+##### ETS (pairs) {.tabset}
+```{r, echo = FALSE, cache = TRUE}
+
+weather_models %>% filter(year_range == "2000:2021" & ar == 0 & p_val == 0.001 & grepl("lgdp", source) & ets_yes == 2 & b_size == 20) %>% gen_p(.)
 
 ```
 
 ### Temp & Pop Only {.tabset}
-
 #### 1990-2021 {.tabset}
-##### no ETS {.tabset}
+##### AR = 0 {.tabset}
 ```{r, echo = FALSE}
 
 weather_models %>% filter(year_range == "1990:2021" & ar == 0 & p_val %in% c(0.01, 0.001) & !grepl("lgdp", source) & ets_yes == 0 & b_size == 20) %>% gen_p(.) 
 
 ```
 
-##### ETS (all phases) {.tabset}
+##### AR = 1 {.tabset}
 ```{r, echo = FALSE}
 
-weather_models %>% filter(year_range == "1990:2021" & ar == 0 & p_val %in% c(0.01, 0.001) & !grepl("lgdp", source) & ets_yes == 3 & b_size == 20) %>% gen_p(.) 
+weather_models %>% filter(year_range == "1990:2021" & ar == 1 & p_val %in% c(0.01, 0.001) & !grepl("lgdp", source) & ets_yes == 0 & b_size == 20) %>% gen_p(.) 
+
+```
+
+##### ETS (all phases) {.tabset}
+```{r, echo = FALSE, cache = TRUE}
+
+weather_models %>% filter(year_range == "1990:2021" & ar == 0 & p_val %in% c(0.01, 0.001) & !grepl("lgdp", source) & ets_yes == 3 & b_size == 20) %>% gen_p(.)
+
+```
+
+##### ETS (individual) {.tabset}
+```{r, echo = FALSE, cache = TRUE}
+
+weather_models %>% filter(year_range == "1990:2021" & ar == 0 & p_val == 0.001 & !grepl("lgdp", source) & ets_yes == 1 & b_size == 20) %>% gen_p(.)
+
+```
+
+##### ETS (pairs) {.tabset}
+```{r, echo = FALSE, cache = TRUE}
+
+weather_models %>% filter(year_range == "1990:2021" & ar == 0 & p_val == 0.001 & !grepl("lgdp", source) & ets_yes == 2 & b_size == 20) %>% gen_p(.)
 
 ```
 
 #### 2000-2021 {.tabset}
-##### no ETS {.tabset}
+##### AR = 0 {.tabset}
 ```{r, echo = FALSE}
 
 weather_models %>% filter(year_range == "2000:2021" & ar == 0 & p_val %in% c(0.01, 0.001) & !grepl("lgdp", source) & ets_yes == 0 & b_size == 20) %>% gen_p(.) 
 
 ```
 
-##### ETS (all phases) {.tabset}
+##### AR = 1 {.tabset}
 ```{r, echo = FALSE}
 
-weather_models %>% filter(year_range == "2000:2021" & ar == 0 & p_val %in% c(0.01, 0.001) & !grepl("lgdp", source) & ets_yes == 3 & b_size == 20) %>% gen_p(.) 
+weather_models %>% filter(year_range == "2000:2021" & ar == 1 & p_val %in% c(0.01, 0.001) & !grepl("lgdp", source) & ets_yes == 0 & b_size == 20) %>% gen_p(.) 
+
+```
+
+##### ETS (all phases) {.tabset}
+```{r, echo = FALSE, cache = TRUE}
+
+weather_models %>% filter(year_range == "2000:2021" & ar == 0 & p_val %in% c(0.01, 0.001) & !grepl("lgdp", source) & ets_yes == 3 & b_size == 20) %>% gen_p(.)
+
+```
+
+##### ETS (individual) {.tabset}
+```{r, echo = FALSE, cache = TRUE}
+
+weather_models %>% filter(year_range == "2000:2021" & ar == 0 & p_val == 0.001 & !grepl("lgdp", source) & ets_yes == 1 & b_size == 20) %>% gen_p(.)
+
+```
+
+##### ETS (pairs) {.tabset}
+```{r, echo = FALSE, cache = TRUE}
+
+weather_models %>% filter(year_range == "2000:2021" & ar == 0 & p_val == 0.001 & !grepl("lgdp", source) & ets_yes == 2 & b_size == 20) %>% gen_p(.)
 
 ```
 
@@ -631,3 +834,115 @@ print(tis)
 plot(tis, zero_line = FALSE)
 
 ```
+
+## Model Overview {.tabset} 
+### w/ Luxembourg {.tabset}
+```{r, echo = FALSE, fig.height = 16}
+
+# Standard model
+st_mod <- models %>% filter(source == "l_edgar_v7 ~ lgdp_wb + lpop + lgdp_wb_sq" & p_val == 0.01 & year_range == "1990:2021" & b_size == 20 & ar == 0) %>% pull(is) %>% first %>% convert(., modname = "Standard")
+
+# Standard controls w/ ETS
+st_ets <- models %>% filter(source == "l_edgar_v7 ~ lgdp_wb + lpop + lgdp_wb_sq + EU_ETS_05 + EU_ETS_08 + EU_ETS_13" & p_val == 0.01 & year_range == "1990:2021" & b_size == 20 & ar == 0) %>% pull(is) %>% first %>% convert(., modname = "Standard w/ ETS")
+
+# Standard w/ temperature controls
+st_temp <- weather_models %>% filter(source == "l_edgar_v7 ~ lgdp_wb + lpop + lgdp_wb_sq + hdd + cdd" & p_val == 0.01 & year_range == "1990:2021" & b_size == 20 & ar == 0) %>% pull(is) %>% first %>% convert(., modname = "Standard w/ temp")
+
+# Standard w/ temperature controls w/ ETS
+st_temp_ets <- weather_models %>% filter(source == "l_edgar_v7 ~ lgdp_wb + lpop + lgdp_wb_sq + hdd + cdd + EU_ETS_05 + EU_ETS_08 + EU_ETS_13" & p_val == 0.01 & year_range == "1990:2021" & b_size == 20 & ar == 0) %>% pull(is) %>% first %>% convert(., modname = "Standard w/ temp & ETS")
+
+# Temperature & population only
+temp_pop <- weather_models %>% filter(source == "l_edgar_v7 ~ lpop + hdd + cdd" & p_val == 0.01 & year_range == "1990:2021" & b_size == 20 & ar == 0) %>% pull(is) %>% first %>% convert(., modname = "Temp & Pop Only")
+
+# Temp & Pop only w/ ETS
+temp_pop_ets <- weather_models %>% filter(source == "l_edgar_v7 ~ lpop + hdd + cdd + EU_ETS_05 + EU_ETS_08 + EU_ETS_13" & p_val == 0.01 & year_range == "1990:2021" & b_size == 20 & ar == 0) %>% pull(is) %>% first %>% convert(., modname = "Temp & Pop w/ ETS")
+
+# Standard interacted with ETS price
+# st_ets_price <- models %>% filter(source == "l_edgar_v7 ~ lgdp_wb + lpop + lgdp_wb_sq" & p_val == 0.01 & year_range == "1990:2021" & b_size == 20 & ar == 0) %>% pull(is) %>% first %>% convert(., modname = "Standard")
+
+# Growth rates (requires transformation)
+# # gr_st
+
+comp_lux <- rbind(temp_pop_ets, temp_pop, st_temp_ets, st_temp, st_ets, st_mod)
+
+ggplot(comp_lux, aes_(x = ~time, y = ~model)) +
+    geom_tile(aes(fill = effect), na.rm = NA) +
+    #scale_fill_viridis_c(na.value = NA) +
+    scale_fill_gradient2(na.value = NA, name = "Effect")+
+    scale_x_continuous(expand = c(0, 0)) +
+    scale_y_discrete(expand = c(0, 0)) +
+    facet_grid(id~.) +
+    theme_bw() +
+    theme(panel.grid = element_blank(),
+          panel.border = element_rect(fill = NA),
+          strip.background = element_blank()) +
+    labs(x = NULL, y = NULL, title= "Model Overview", subtitle = "Specs: W. Lux; p = 0.01; AR = 0")
+```
+
+### w/o Luxembourg {.tabset}
+```{r, echo = FALSE, fig.height = 16}
+
+mods <- readRDS(here("output/temp/nolux_simpleets.RDS"))
+
+# Standard model
+st_mod <- mods %>% filter(source == "l_edgar_v7 ~ lgdp_wb + lpop + lgdp_wb_sq" & p_val == 0.01 & year_range == "1990:2021" & b_size == 20 & ar == 0) %>% pull(is) %>% first %>% convert(., modname = "Standard")
+
+# Standard controls w/ ETS
+st_ets <- mods %>% filter(source == "l_edgar_v7 ~ lgdp_wb + lpop + lgdp_wb_sq + EU_ETS_05 + EU_ETS_08 + EU_ETS_13" & p_val == 0.01 & year_range == "1990:2021" & b_size == 20 & ar == 0) %>% pull(is) %>% first %>% convert(., modname = "Standard w/ ETS")
+
+# Standard w/ temperature controls
+st_temp <- mods %>% filter(source == "l_edgar_v7 ~ lgdp_wb + lpop + lgdp_wb_sq + hdd + cdd" & p_val == 0.01 & year_range == "1990:2021" & b_size == 20 & ar == 0) %>% pull(is) %>% first %>% convert(., modname = "Standard w/ temp")
+
+# Standard w/ temperature controls w/ ETS
+st_temp_ets <- mods %>% filter(source == "l_edgar_v7 ~ lgdp_wb + lpop + lgdp_wb_sq + hdd + cdd + EU_ETS_05 + EU_ETS_08 + EU_ETS_13" & p_val == 0.01 & year_range == "1990:2021" & b_size == 20 & ar == 0) %>% pull(is) %>% first %>% convert(., modname = "Standard w/ temp & ETS")
+
+# Temperature & population only
+temp_pop <- mods %>% filter(source == "l_edgar_v7 ~ lpop + hdd + cdd" & p_val == 0.01 & year_range == "1990:2021" & b_size == 20 & ar == 0) %>% pull(is) %>% first %>% convert(., modname = "Temp & Pop Only")
+
+# Temp & Pop only w/ ETS
+temp_pop_ets <- mods %>% filter(source == "l_edgar_v7 ~ lpop + hdd + cdd + EU_ETS_05 + EU_ETS_08 + EU_ETS_13" & p_val == 0.01 & year_range == "1990:2021" & b_size == 20 & ar == 0) %>% pull(is) %>% first %>% convert(., modname = "Temp & Pop w/ ETS")
+
+# Standard interacted with ETS price
+# st_ets_price <- models %>% filter(source == "l_edgar_v7 ~ lgdp_wb + lpop + lgdp_wb_sq" & p_val == 0.01 & year_range == "1990:2021" & b_size == 20 & ar == 0) %>% pull(is) %>% first %>% convert(., modname = "Standard")
+
+# Growth rates (requires transformation)
+# # gr_st
+
+comp_lux <- rbind(temp_pop_ets, temp_pop, st_temp_ets, st_temp, st_ets, st_mod)
+
+comp_lux %>% 
+  group_by(id) %>% 
+  filter(!all(is.na(effect))) %>% 
+  ggplot(aes_(x = ~time, y = ~model)) +
+      geom_tile(aes(fill = effect), na.rm = NA) +
+      #scale_fill_viridis_c(na.value = NA) +
+      scale_fill_gradient2(na.value = NA, name = "Effect")+
+      scale_x_continuous(expand = c(0,0)) +
+      scale_y_discrete(expand = c(0,0)) +
+      facet_grid(id~.) +
+      theme_bw() +
+      theme(panel.grid = element_blank(),
+            panel.border = element_rect(fill = NA),
+            #panel.spacing.y = unit(0, "lines"),
+            strip.background = element_blank(),
+            axis.text = element_text(size = 10, color = "black"),
+            strip.text.y = element_text(size = 12, angle = 0)) +
+      labs(x = NULL, y = NULL, title= "Model Overview", subtitle = "Specs: W.o Lux; p = 0.01; AR = 0")
+
+
+```
+
+
+```{r}
+
+nolux <- rbind(readRDS(here("output/temp/nolux_simpleets.RDS")), 
+                       readRDS(here("output/temp/nolux_simpleets_bs10_30.RDS")),
+                       readRDS(here("output/temp/nolux_further_ets_20.RDS")))
+nolux %>% 
+  filter(source == "l_edgar_v7 ~ lgdp_wb + lpop + lgdp_wb_sq",
+         year_range == "1990:2021",
+         b_size == 20,
+         p_val == 0.01, 
+         ar == 0) %>% gen_p(.)
+```
+
