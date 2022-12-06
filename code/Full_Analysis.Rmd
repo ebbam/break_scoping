@@ -28,7 +28,7 @@ library(plm)
 #   repos = NULL, type = "source"
 # )
 
-# devtools::install_github("moritzpschwarz/getspanel")
+#devtools::install_github("moritzpschwarz/getspanel")
 
 source(here("code/dicts.R"))
 
@@ -85,9 +85,9 @@ df <- dfi %>% group_by(country) %>%
 df %>% 
   filter(country %in% sel) %>% 
   ggplot() +
-  geom_line(aes(x = year, y = lgdp), color = "blue") +
-  geom_line(aes(x = year, y = lgdp_oecd), color = "red") +
-  geom_line(aes(x = year, y = lgdp_wb), color = "black", linetype = "dashed") +
+  geom_line(aes(x = year, y = lgdp), color = "blue", na.rm = TRUE) +
+  geom_line(aes(x = year, y = lgdp_oecd), color = "red", na.rm = TRUE) +
+  geom_line(aes(x = year, y = lgdp_wb), color = "black", linetype = "dashed", na.rm = TRUE) +
   facet_wrap(vars(country), scales = "free")
   
 ```
@@ -153,7 +153,7 @@ saveRDS(models, here("output/final_results/standard_models.RDS"))
 
 ```
 
-# Formulas with weather controls (IEA data: 2000:2021)
+# EXCLUDE: Formulas with weather controls (IEA data: 2000:2021)
 ```{r}
 
 form_weather <- c(
@@ -219,7 +219,7 @@ weather_models <- foreach(f = c(form_weather, form_ets_weather), .combine = rbin
 df %>% filter(country %in% sel & year >= 1990) %>% select(year, country, HDD16dailybypop, CDD18dailybypop, hdd, cdd) %>% 
   pivot_longer(cols = !c(year, country), names_to = "cat", values_to = "n") %>% 
   ggplot(aes(x = year, y = n, color = cat)) +
-  geom_line() +
+  geom_line(na.rm = TRUE) +
   facet_wrap(vars(country), scales = "free")
 
 form_dd <- c(
@@ -314,15 +314,7 @@ gr_models <- foreach(a = c(0,1), .combine = rbind, .packages = c('tidyverse', 'g
                           ar = a)
   }
 
-saveRDS(gr_models, here("output/final_results/growth_rate_high_pval.RDS"))
-
-```
-
-
-
-# TO BE ADDED: Growth rates with weather controls
-```{r}
-
+#saveRDS(gr_models, here("output/final_results/growth_rate_high_pval.RDS"))
 
 ```
 
@@ -406,11 +398,152 @@ tis_test <-
                           ar = 0))
 ```
 
-# Common Correlated Effects CCE
+# Selected sample WITHOUT LUXEMBOURG
+```{r}
+
+form_b <- c(form[1], form_dd)
+
+form_b_ets <- c(form_b, 
+                paste(form_b, "+ EU_ETS_05 + EU_ETS_08 + EU_ETS_13"))
+
+
+form_b_ets_add <- c(paste(form_b, "+ EU_ETS_05"),
+              paste(form_b, "+ EU_ETS_08"), 
+              paste(form_b, "+ EU_ETS_13"), 
+              paste(form_b, "+ EU_ETS_05 + EU_ETS_08"),
+              paste(form_b, "+ EU_ETS_05 + EU_ETS_13"),
+              paste(form_b, "+ EU_ETS_08 + EU_ETS_13"))
+
+cl <- makeCluster(6)
+registerDoParallel(cl)
+
+# m_nolux <- foreach(f = c(form_b_ets), .combine = rbind, .packages = c('tidyverse', 'getspanel')) %:%
+#   foreach(a = c(0,1), .combine = rbind) %:%
+#   foreach(yr = c(1990, 2000), .combine = rbind) %:%
+#   #foreach(b = c(10, 20, 30), .combine = rbind) %:%
+#     foreach(p.value = c(0.05, 0.01, 0.001), .combine = rbind) %dopar% {
+#     dat <- df %>% 
+#     filter(country %in% sel[sel != "Luxembourg"] & year >= yr)
+#       is <- isatpanel(
+#             data = dat,
+#             formula = as.formula(f),
+#             index = c("country", "year"),
+#             effect = "twoways",
+#             iis = TRUE,
+#             fesis = TRUE,
+#             ar = a,
+#             t.pval = p.value,
+#             max.block.size = b
+#             )
+#           models = tibble(source = f, 
+#                           country_sample = "NOLUX_EU15+selected", 
+#                           year_range = paste0(min(dat$year),":",max(dat$year)), 
+#                           p_val = p.value, 
+#                           is = list(is),
+#                           iis = TRUE,
+#                           b_size = b,
+#                           ar = a)
+#     }
+
+
+# Run more ETS specs
+m_nolux_addets <- foreach(f = c(form_b_ets_add), .combine = rbind, .packages = c('tidyverse', 'getspanel')) %:%
+  foreach(a = c(0,1), .combine = rbind) %:%
+  foreach(yr = c(1990, 2000), .combine = rbind) %:%
+  #foreach(b = c(10, 20, 30), .combine = rbind) %:%
+    foreach(p.value = c(0.05, 0.01, 0.001), .combine = rbind) %dopar% {
+    dat <- df %>%
+    filter(country %in% sel[sel != "Luxembourg"] & year >= yr)
+      is <- isatpanel(
+            data = dat,
+            formula = as.formula(f),
+            index = c("country", "year"),
+            effect = "twoways",
+            iis = TRUE,
+            fesis = TRUE,
+            ar = a,
+            t.pval = p.value,
+            max.block.size = 20
+            )
+          models = tibble(source = f,
+                          country_sample = "NOLUX_EU15+selected",
+                          year_range = paste0(min(dat$year),":",max(dat$year)),
+                          p_val = p.value,
+                          is = list(is),
+                          iis = TRUE,
+                          b_size = 20,
+                          ar = a)
+    }
+
+
+#saveRDS(m_nolux, here("output/temp/nolux_simpleets.RDS"))
+#saveRDS(m_nolux_bs, here("output/temp/nolux_simpleets_bs10_30.RDS"))
+#saveRDS(m_nolux_addets, here("output/temp/nolux_further_ets_20.RDS"))
+
+m_nolux_addets %>% pull(is) %>% first %>% plot
+
+#saveRDS(models, here("output/final_results/standard_models.RDS"))
+
+```
+
+
+# Growth rates without Luxembourg
+12 models
+```{r}
+
+df2 <- df %>% 
+  filter(country %in% sel & year >= 1989) %>% 
+  group_by(country) %>%
+  mutate(across(c(cdd, hdd), list(
+    d = ~c(NA, diff(.x, differences = 1)),
+    g = ~(c(NA, diff(.x, differences = 1))/lag(.x, n = 1L))),
+         .names = "{.fn}.{.col}")) %>% 
+  mutate(g.cdd = ifelse(d.cdd == 0 | g.cdd == Inf, 0, g.cdd))
+
+gr_forms <- c(
+  # "d.l_edgar_v7 ~ d.lgdp_wb + d.lpop + d.lgdp_wb_sq",
+  "d.l_edgar_v7 ~ d.lgdp_wb + d.lpop + d.lgdp_wb_sq + g.cdd + g.hdd",
+  "d.l_edgar_v7 ~ d.lpop + g.cdd + g.hdd")
+
+cl <- makeCluster(6)
+registerDoParallel(cl)
+gr_nolux_alts <- foreach(f = c(gr_forms), .combine = rbind, .packages = c('tidyverse', 'getspanel')) %:%
+   foreach(a = c(0,1), .combine = rbind) %:%
+   foreach(p.value = c(0.1, 0.05, 0.01, 0.001), .combine = rbind) %dopar% {
+  #foreach(b = c(10, 20, 30), .combine = rbind) 
+    dat <- df2 %>% 
+    filter(country %in% sel[sel != "Luxembourg"] & year >= 1990)
+      is <- isatpanel(
+            data = dat,
+            formula = as.formula(f),
+            index = c("country", "year"),
+            effect = "twoways",
+            iis = TRUE,
+            fesis = TRUE,
+            ar = a,
+            t.pval = p.value,
+            max.block.size = 20
+            )
+          models = tibble(source = f,
+                          country_sample = "NOLUX_EU15+selected", 
+                          year_range = paste0(min(dat$year),":",max(dat$year)), 
+                          p_val = p.value, 
+                          is = list(is),
+                          iis = TRUE,
+                          b_size = 20,
+                          ar = a)
+  }
+
+saveRDS(gr_nolux_alts, here("output/temp/growth_rate_temp_nolux.RDS"))
+
+```
+
+
+# CCE: Standard
 ```{r} 
 ##### Manually Implementing CCE Estimator
 ####create x-sectional averages
-dat_simple <- df %>% filter(country %in% sel & year >= 1990) %>% select(country, year, l_edgar_v7, lgdp_wb, lpop, lgdp_wb_sq) %>% 
+dat_simple <- df %>% filter(country %in% sel[sel != "Luxembourg"] & year >= 1990) %>% select(country, year, l_edgar_v7, lgdp_wb, lpop, lgdp_wb_sq) %>% 
   group_by(year) %>% mutate(mean_l_emissions = mean(l_edgar_v7),
                             mean_lgdp = mean(lgdp_wb),
                             mean_lpop = mean(lpop),
@@ -435,10 +568,10 @@ vt <- cce_dummies(dat_simple, c('mean_l_emissions', 'mean_lgdp', 'mean_lpop', 'm
 test_simple <- dat_simple %>% cbind(vt[[1]], vt[[2]], vt[[3]], vt[[4]]) %>% clean_names
 
 # Note: automate column selection in formula for m1
-m1 <- plm(as.formula(paste("l_edgar_v7 ~ lgdp_wb + lpop + lgdp_wb_sq + ", paste(names(test_simple[11:94]), collapse = "+"))) , data = test_simple, model="within", effect="twoways", index=c("country", "year"))
+m1 <- plm(as.formula(paste("l_edgar_v7 ~ lgdp_wb + lpop + lgdp_wb_sq + ", paste(names(test_simple[11:90]), collapse = "+"))) , data = test_simple, model="within", effect="individual", index=c("country", "year"))
 summary(m1)
 
-m_pcce <- pcce(l_edgar_v7 ~ lgdp_wb + lpop + lgdp_wb_sq, data = dat_simple, effect = "twoways", model="p", index=c("country", "year"))
+m_pcce <- pcce(l_edgar_v7 ~ lgdp_wb + lpop + lgdp_wb_sq, data = dat_simple, model="p", effect = "individual", index=c("country", "year"))
 summary(m_pcce)
 
 for(i in 1:20){
@@ -453,7 +586,7 @@ for(i in 1:20){
 pcce_models <- tibble()
 for(p.value in c(0.05, 0.01, 0.001)){
     is <- isatpanel(data = test_simple ,
-            formula = as.formula(paste("l_edgar_v7 ~ lgdp_wb + lpop + lgdp_wb_sq + ", paste(names(test_simple[11:94]), collapse = "+"))),
+            formula = as.formula(paste("l_edgar_v7 ~ lgdp_wb + lpop + lgdp_wb_sq + ", paste(names(test_simple[11:90]), collapse = "+"))),
             index = c("country", "year"),
             effect = "twoways",
             iis = TRUE,
@@ -462,7 +595,7 @@ for(p.value in c(0.05, 0.01, 0.001)){
             max.block.size = 20
             ) 
   pcce_models <- rbind(pcce_models, tibble(source = "pcce(l_edgar_v7 ~ lgdp_wb + lpop + lgdp_wb_sq)", 
-                          country_sample = "EU15+selected", 
+                          country_sample = "NOLUXEU15+selected", 
                           year_range = paste0(min(test_simple$year),":",max(test_simple$year)), 
                           p_val = p.value, 
                           is = list(is),
@@ -471,7 +604,7 @@ for(p.value in c(0.05, 0.01, 0.001)){
                           ar = 0))
 }
 
-saveRDS(pcce_models, here("output/final_results/pcce_models.RDS"))
+saveRDS(pcce_models, here("output/final_results/pcce_models_twfeffects_nolux.RDS"))
 # Wondering about user.estimator argument in isatpanel?
 # calling plm engine automatically calls plm - any way to modify to call another function in plm package? ie. pcce
 
@@ -482,8 +615,282 @@ saveRDS(pcce_models, here("output/final_results/pcce_models.RDS"))
 # # Latest trial with updated variables: 
 # # iis = TRUE, pval = 0.001, block size = 20
 # 
-# #saveRDS(t_pcce, here("output/pcce_trial.RDS"))
+# saveRDS(t_pcce, here("output/pcce_trial.RDS"))
 # saveRDS(t_pcce001, here("output/pcce_trial001.RDS"))
 # saveRDS(t_pcce05, here("output/pcce_trial05.RDS"))
 # saveRDS(t_pcce01, here("output/pcce_trial01.RDS"))
-# test <- readRDS(here("output/pcce_trial.RDS"))
+
+```
+
+# CCE: Standard with Temp
+```{r} 
+##### Manually Implementing CCE Estimator
+####create x-sectional averages
+dat_simple <- df %>% filter(country %in% sel[sel != "Luxembourg"] & year >= 1990) %>% select(country, year, l_edgar_v7, lgdp_wb, lpop, lgdp_wb_sq, cdd, hdd) %>% 
+  group_by(year) %>% mutate(mean_l_emissions = mean(l_edgar_v7),
+                            mean_lgdp = mean(lgdp_wb),
+                            mean_lpop = mean(lpop),
+                            mean_lgdp_sq = mean(lgdp_wb_sq),
+                            mean_cdd = mean(cdd),
+                            mean_hdd = mean(hdd)) %>% arrange(country)
+
+# ### generate matrix of interactions so that each unit can have different coefficients
+# Below to be automated
+
+cce_dummies <- function(df, vars){
+  vs <- list()
+  for(v in vars){
+    t <- as.matrix(df[[v]]*dummy_cols(df$country, remove_selected_columns = TRUE))
+    colnames(t) = paste0(v, colnames(t))
+    vs <- append(vs, list(t))
+  } 
+  names(vs) <- vars
+  return(vs)
+}
+
+vt <- cce_dummies(dat_simple, c('mean_l_emissions', 'mean_lgdp', 'mean_lpop', 'mean_lgdp_sq'))
+
+test_simple <- dat_simple %>% cbind(vt[[1]], vt[[2]], vt[[3]], vt[[4]]) %>% clean_names
+
+# Note: automate column selection in formula for m1
+m1 <- plm(as.formula(paste("l_edgar_v7 ~ lgdp_wb + lpop + lgdp_wb_sq + ", paste(names(test_simple[11:90]), collapse = "+"))) , data = test_simple, model="within", effect="individual", index=c("country", "year"))
+summary(m1)
+
+m_pcce <- pcce(l_edgar_v7 ~ lgdp_wb + lpop + lgdp_wb_sq, data = dat_simple, model="p", effect = "individual", index=c("country", "year"))
+summary(m_pcce)
+
+for(i in 1:20){
+  if(identical(round(m_pcce$coefficients, i), round(m1$coefficients[1:3], i))){
+    next
+  }else{
+    print(paste("Coefficients identical at", i-1, "decimal places."))
+    break}
+}
+
+#################################################################################
+pcce_models <- tibble()
+for(p.value in c(0.05, 0.01, 0.001)){
+    is <- isatpanel(data = test_simple ,
+            formula = as.formula(paste("l_edgar_v7 ~ lgdp_wb + lpop + lgdp_wb_sq + ", paste(names(test_simple[11:90]), collapse = "+"))),
+            index = c("country", "year"),
+            effect = "twoways",
+            iis = TRUE,
+            fesis = TRUE,
+            t.pval = p.value,
+            max.block.size = 20
+            ) 
+  pcce_models <- rbind(pcce_models, tibble(source = "pcce(l_edgar_v7 ~ lgdp_wb + lpop + lgdp_wb_sq)", 
+                          country_sample = "NOLUXEU15+selected", 
+                          year_range = paste0(min(test_simple$year),":",max(test_simple$year)), 
+                          p_val = p.value, 
+                          is = list(is),
+                          iis = TRUE,
+                          b_size = 20,
+                          ar = 0))
+}
+
+saveRDS(pcce_models, here("output/final_results/pcce_models_twfeffects_nolux.RDS"))
+# Wondering about user.estimator argument in isatpanel?
+# calling plm engine automatically calls plm - any way to modify to call another function in plm package? ie. pcce
+
+# Basic call from above: iis = TRUE, pval = 0.001, block size = 20
+#saveRDS(t_pcce, here("output/pcce_trial2.RDS"))
+# test2 <- readRDS(here("output/pcce_trial2.RDS"))
+# 
+# # Latest trial with updated variables: 
+# # iis = TRUE, pval = 0.001, block size = 20
+# 
+# saveRDS(t_pcce, here("output/pcce_trial.RDS"))
+# saveRDS(t_pcce001, here("output/pcce_trial001.RDS"))
+# saveRDS(t_pcce05, here("output/pcce_trial05.RDS"))
+# saveRDS(t_pcce01, here("output/pcce_trial01.RDS"))
+
+```
+
+# Energy shares
+Share of electricity generation per fuel type
+Source: OWID via BP Statistical Review of World Energy and Ember Global and European Electricity Review
+
+```{r} 
+
+shares_df <- 
+  df %>%
+  mutate(fossil_share_elec = ifelse(is.na(fossil_share_elec), 100 - low_carbon_share_elec, fossil_share_elec)) %>%
+  filter(country %in% sel & year >=1990) %>% 
+  select(country, year, ets_price,
+         l_edgar_v7,
+         lgdp_wb, lgdp_wb_sq, lpop, EU_ETS_05, EU_ETS_08, EU_ETS_13, hdd, cdd,
+         low_carbon_share_elec,
+         renewables_share_elec,
+         other_renewables_share_elec,
+         other_renewables_share_elec_exc_biofuel,
+         biofuel_share_elec,
+         fossil_share_elec,
+         coal_share_elec,
+         oil_share_elec,
+         gas_share_elec,
+         nuclear_share_elec,
+         solar_share_elec,
+         wind_share_elec,
+         hydro_share_elec,
+         contains("_electricity"),
+         -per_capita_electricity
+         )
+
+share_controls <- c("~ lgdp_wb + lpop + lgdp_wb_sq",
+                 "~ lgdp_wb + lpop + lgdp_wb_sq + hdd + cdd",
+                 "~ lpop + hdd + cdd",
+                 "~ lgdp_wb + lpop + lgdp_wb_sq + EU_ETS_05 + EU_ETS_08 + EU_ETS_13",
+                 "~ lgdp_wb + lpop + lgdp_wb_sq + hdd + cdd + EU_ETS_05 + EU_ETS_08 + EU_ETS_13",
+                 "~ lpop + hdd + cdd + EU_ETS_05 + EU_ETS_08 + EU_ETS_13")
+
+share_forms <- c(paste("low_carbon_share_elec", share_controls),
+                       paste("renewables_share_elec", share_controls),
+                             paste("fossil_share_elec", share_controls))
+
+source_forms <- c(paste("solar_share_elec", share_controls),
+                  paste("hydro_share_elec", share_controls),
+                  paste("wind_share_elec", share_controls),
+                  paste("nuclear_share_elec", share_controls),
+                  paste("oil_share_elec", share_controls),
+                  paste("coal_share_elec", share_controls),
+                  paste("gas_share_elec", share_controls))
+
+cl <- makeCluster(6)
+registerDoParallel(cl)
+
+shares_sources <- foreach(f = c(source_forms), .combine = rbind, .packages = c('tidyverse', 'getspanel')) %:%
+  #foreach(a = c(0,1), .combine = rbind) %:%
+  foreach(yr = c(1990, 2000), .combine = rbind) %:%
+  #foreach(b = c(10, 20, 30), .combine = rbind) %:%
+    foreach(p.value = c(0.05, 0.01, 0.001), .combine = rbind) %dopar% {
+    dat <- shares_df %>%
+    filter(country %in% sel & year >= yr)
+      is <- isatpanel(
+            data = dat,
+            formula = as.formula(f),
+            index = c("country", "year"),
+            effect = "twoways",
+            iis = TRUE,
+            fesis = TRUE,
+            ar = 0,
+            t.pval = p.value,
+            max.block.size = 20
+            )
+          models = tibble(source = f,
+                          country_sample = "EU15+selected",
+                          year_range = paste0(min(dat$year),":",max(dat$year)),
+                          p_val = p.value,
+                          is = list(is),
+                          iis = TRUE,
+                          b_size = 20,
+                          ar = 0)
+    }
+
+#saveRDS(shares_sources_nolux, here("output/temp/shares_bysource_noar_nolux.RDS"))
+saveRDS(shares_sources, here("output/temp/shares_bysource_noar.RDS"))
+
+```
+
+# Interact ETS dummy with price
+```{r}
+
+ets_price_covs <- c("~ lgdp_wb + lpop + lgdp_wb_sq + EU_ETS_05 + EU_ETS_08 + EU_ETS_13 + EU_ETS_05:ets_price + EU_ETS_08:ets_price + EU_ETS_13:ets_price",
+                 "~ lgdp_wb + lpop + lgdp_wb_sq + hdd + cdd + EU_ETS_05 + EU_ETS_08 + EU_ETS_13 + EU_ETS_05:ets_price + EU_ETS_08:ets_price + EU_ETS_13:ets_price",
+                 "~ lpop + hdd + cdd + EU_ETS_05 + EU_ETS_08 + EU_ETS_13 + EU_ETS_05:ets_price + EU_ETS_08:ets_price + EU_ETS_13:ets_price")
+
+forms_ets_price <- c(paste("l_edgar_v7", ets_price_covs),
+                 paste("low_carbon_share_elec", ets_price_covs),
+                 paste("renewables_share_elec", ets_price_covs),
+                 paste("fossil_share_elec", ets_price_covs),
+                 paste("solar_share_elec", ets_price_covs),
+                 paste("hydro_share_elec", ets_price_covs),
+                 paste("wind_share_elec", ets_price_covs),
+                 paste("nuclear_share_elec", ets_price_covs),
+                 paste("oil_share_elec", ets_price_covs),
+                 paste("coal_share_elec", ets_price_covs),
+                 paste("gas_share_elec", ets_price_covs))
+
+cl <- makeCluster(7)
+registerDoParallel(cl)
+
+temp_ets_prices <- foreach(f = c(forms_ets_price), .combine = rbind, .packages = c('tidyverse', 'getspanel')) %:%
+  foreach(a = c(0,1), .combine = rbind) %:%
+   #foreach(b = c(10, 20, 30), .combine = rbind) %:%
+     foreach(p.value = c(0.05, 0.01, 0.001), .combine = rbind) %dopar% {
+     dat <- df %>%
+     filter(country %in% sel[sel != "Luxembourg"] & year >= 1990) %>% 
+       mutate(ets_price = ifelse(year < 2005, 0, ets_price))
+       is <- isatpanel(
+            data = dat,
+             formula = as.formula(f),
+             index = c("country", "year"),
+             effect = "twoways",
+             iis = TRUE,
+             fesis = TRUE,
+             ar = a,
+             t.pval = p.value,
+             max.block.size = 20
+             )
+           temp_ets_prices = tibble(source = f,
+                           country_sample = "NOLUX_EU15+selected",
+                           year_range = paste0(min(dat$year),":",max(dat$year)),
+                          p_val = p.value,
+                           is = list(is),
+                           iis = TRUE,
+                           b_size = 20,
+                          ar = a)
+     }
+
+saveRDS(temp_ets_prices, here("output/temp/mod_ets_price.RDS"))
+
+#saveRDS(shares_ets, here("output/temp/shares_ets_noar.RDS"))
+saveRDS(temporary_ets_shares, here("output/temp/temporary_ets_shares.RDS"))
+```
+
+
+
+# Electricity generation per source (TWH)
+Additional option: Electricity generation per fuel type, measured in terawatt-hours
+Source: OWID via BP Statistical Review of World Energy and Ember Global and European Electricity Review
+```{r}
+
+df %>% 
+  select(country, year, low_carbon_electricity, renewables_electricity, fossil_electricity) %>% 
+  filter(country %in% sel & year >=2020) %>% 
+  pivot_longer(!c(country, year), names_to = 'source', values_to = 'elect_twh') %>%
+  ggplot(aes(x = year, y = elect_twh, color = source)) +
+  geom_line(na.rm = TRUE) +
+  facet_wrap(~country, scales = "free")
+
+# Run more ETS specs
+m_nolux_addets <- foreach(f = c(form_b_ets_add), .combine = rbind, .packages = c('tidyverse', 'getspanel')) %:%
+  #foreach(a = c(0,1), .combine = rbind) %:%
+  foreach(yr = c(1990, 2000), .combine = rbind) %:%
+  #foreach(b = c(10, 20, 30), .combine = rbind) %:%
+    foreach(p.value = c(0.05, 0.01, 0.001), .combine = rbind) %dopar% {
+    dat <- df %>%
+    filter(country %in% sel[sel != "Luxembourg"] & year >= yr)
+      is <- isatpanel(
+            data = dat,
+            formula = as.formula(f),
+            index = c("country", "year"),
+            effect = "twoways",
+            iis = TRUE,
+            fesis = TRUE,
+            ar = 0,
+            t.pval = p.value,
+            max.block.size = 20
+            )
+          models = tibble(source = f,
+                          country_sample = "NOLUX_EU15+selected",
+                          year_range = paste0(min(dat$year),":",max(dat$year)),
+                          p_val = p.value,
+                          is = list(is),
+                          iis = TRUE,
+                          b_size = 20,
+                          ar = 0)
+    }
+
+```
+
