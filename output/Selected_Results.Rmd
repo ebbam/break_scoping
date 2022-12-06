@@ -38,6 +38,7 @@ library(doParallel)
 library(gridExtra)
 library(conflicted)
 library(viridis)
+#library(highcharter)
 
 conflict_prefer("filter", "dplyr")
 conflict_prefer("first", "dplyr")
@@ -73,7 +74,10 @@ cfesis_models <- readRDS(here("output/final_results/cfesis_models_Xtemp_XETS.RDS
 
 # Without Luxembourg
 # Standard models
-standard <- readRDS(here("output/temp/nolux_simpleets.RDS")) %>% rbind(readRDS(here("output/temp/nolux_further_ets_20.RDS"))) %>% 
+standard <- readRDS(here("output/temp/nolux_simpleets.RDS")) %>% 
+  rbind(readRDS(here("output/temp/nolux_further_ets_20.RDS"))) %>% 
+  # OPTIONAL
+  rbind(readRDS(here("output/temp/temporary_ets.RDS"))) %>% 
   mutate(ets_05 = ifelse(grepl("EU_ETS_05", source), 1, 0),
          ets_08 = ifelse(grepl("EU_ETS_08", source), 1, 0),
          ets_13 = ifelse(grepl("EU_ETS_13", source), 1, 0),
@@ -82,7 +86,7 @@ standard <- readRDS(here("output/temp/nolux_simpleets.RDS")) %>% rbind(readRDS(h
 # Shares
 shares <- readRDS(here("output/temp/shares_noar_nolux.RDS")) %>% 
   rbind(readRDS(here("output/temp/shares_bysource_noar_nolux.RDS"))) %>% 
-  rbind(readRDS(here("output/temp/shares_ets_noar.RDS"))) %>% 
+  rbind(readRDS(here("output/temp/temporary_ets_shares.RDS"))) %>% 
         mutate(ets_05 = ifelse(grepl("EU_ETS_05", source), 1, 0),
          ets_08 = ifelse(grepl("EU_ETS_08", source), 1, 0),
          ets_13 = ifelse(grepl("EU_ETS_13", source), 1, 0),
@@ -654,16 +658,16 @@ standard %>% filter(!grepl("lgdp_wb", source) & year_range == "2000:2021" & ar =
 org <- shares %>% separate(source, into = c("indic","formula"), sep = "[~]", remove = FALSE) %>%
   mutate(indic = trimws(indic),
          formula = trimws(formula),
-         model = case_when(formula == "lgdp_wb + lpop + lgdp_wb_sq" ~ "Standard",                                                                           
+         model = case_when(formula == "lgdp_wb + lpop + lgdp_wb_sq" ~ "Standard",
                            formula == "lgdp_wb + lpop + lgdp_wb_sq + hdd + cdd" ~ "Standard w/ Temp",
-                           formula == "lpop + hdd + cdd" ~ "Temp & Pop",                                                                                      
+                           formula == "lpop + hdd + cdd" ~ "Temp & Pop",
                            formula == "lgdp_wb + lpop + lgdp_wb_sq + EU_ETS_05 + EU_ETS_08 + EU_ETS_13" ~ "Standard w/ ETS",
                            formula == "lgdp_wb + lpop + lgdp_wb_sq + hdd + cdd + EU_ETS_05 + EU_ETS_08 + EU_ETS_13" ~ "Standard w/ Temp & ETS",
                            formula == "lpop + hdd + cdd + EU_ETS_05 + EU_ETS_08 + EU_ETS_13" ~ "Temp & Pop w/ ETS",
                            formula == "lgdp_wb + lpop + lgdp_wb_sq + EU_ETS_05:ets_price + EU_ETS_08:ets_price + EU_ETS_13:ets_price" ~ "Standard w/ ETS Price",
                            formula == "lgdp_wb + lpop + lgdp_wb_sq + hdd + cdd + EU_ETS_05:ets_price + EU_ETS_08:ets_price + EU_ETS_13:ets_price" ~ "Standard w/ Temp & ETS Price",
-                           formula == "lpop + hdd + cdd + EU_ETS_05:ets_price + EU_ETS_08:ets_price + EU_ETS_13:ets_price" ~ "Temp & Pop w/ ETS Price")) %>% 
-                             
+                           formula == "lpop + hdd + cdd + EU_ETS_05:ets_price + EU_ETS_08:ets_price + EU_ETS_13:ets_price" ~ "Temp & Pop w/ ETS Price")) %>%
+
                              filter(p_val %in% c(0.01, 0.001) & year_range == "1990:2021")
 
 ```
@@ -686,6 +690,8 @@ org %>% filter(indic == "low_carbon_share_elec" & model == "Standard w/ ETS") %>
 ##### w/ ETS Price{.tabset}
 ```{r, echo = FALSE}
 
+org %>% filter(indic == "low_carbon_share_elec" & model == "Standard w/ ETS Price") %>% gen_p(.)
+
 ```
 
 #### Standard w/ Temp{.tabset}
@@ -706,6 +712,8 @@ org %>% filter(indic == "low_carbon_share_elec" & model == "Standard w/ Temp & E
 ##### w/ ETS Price{.tabset}
 ```{r, echo = FALSE}
 
+org %>% filter(indic == "low_carbon_share_elec" & model == "Standard w/ Temp & ETS Price") %>% gen_p(.)
+
 ```
 
 #### Temp & Pop {.tabset}
@@ -725,6 +733,8 @@ org %>% filter(indic == "low_carbon_share_elec" & model == "Temp & Pop w/ ETS") 
 
 ##### w/ ETS Price{.tabset}
 ```{r, echo = FALSE}
+
+org %>% filter(indic == "low_carbon_share_elec" & model == "Temp & Pop w/ ETS Price") %>% gen_p(.)
 
 ```
 
@@ -747,6 +757,8 @@ org %>% filter(indic == "renewables_share_elec" & model == "Standard w/ ETS") %>
 ##### w/ ETS Price{.tabset}
 ```{r, echo = FALSE}
 
+org %>% filter(indic == "renewables_share_elec" & model == "Standard w/ ETS Price") %>% gen_p(.)
+
 
 ```
 
@@ -768,6 +780,8 @@ org %>% filter(indic == "renewables_share_elec" & model == "Standard w/ Temp & E
 ##### w/ ETS Price{.tabset}
 ```{r, echo = FALSE}
 
+org %>% filter(indic == "renewables_share_elec" & model == "Standard w/ Temp & ETS Price") %>% gen_p(.)
+
 ```
 
 #### Temp & Pop {.tabset}
@@ -788,6 +802,7 @@ org %>% filter(indic == "renewables_share_elec" & model == "Temp & Pop w/ ETS") 
 ##### w/ ETS Price{.tabset}
 ```{r, echo = FALSE}
 
+org %>% filter(indic == "renewables_share_elec" & model == "Temp & Pop w/ ETS Price") %>% gen_p(.)
 
 ```
 
@@ -810,6 +825,7 @@ org %>% filter(indic == "fossil_share_elec" & model == "Standard w/ ETS") %>% ge
 ##### w/ ETS Price{.tabset}
 ```{r, echo = FALSE}
 
+org %>% filter(indic == "fossil_share_elec" & model == "Standard w/ ETS Price") %>% gen_p(.)
 
 ```
 
@@ -831,6 +847,7 @@ org %>% filter(indic == "fossil_share_elec" & model == "Standard w/ Temp & ETS")
 ##### w/ ETS Price{.tabset}
 ```{r, echo = FALSE}
 
+org %>% filter(indic == "fossil_share_elec" & model == "Standard w/ Temp & ETS Price") %>% gen_p(.)
 
 ```
 
@@ -852,9 +869,9 @@ org %>% filter(indic == "fossil_share_elec" & model == "Temp & Pop w/ ETS") %>% 
 ##### w/ ETS Price{.tabset}
 ```{r, echo = FALSE}
 
+org %>% filter(indic == "fossil_share_elec" & model == "Temp & Pop w/ ETS Price") %>% gen_p(.)
 
 ```
-
 
 
 ## Emissions: Growth Rates {.tabset}
@@ -931,9 +948,9 @@ gr_noLX %>% filter(source == "d.l_edgar_v7 ~ d.lgdp_wb + d.lpop + d.lgdp_wb_sq" 
 ##### p = 0.1 {.tabset}
 
 ```{r, echo = FALSE, cache = TRUE}
-# gr_noLX <- here("output/temp/growth_rate_nolux.RDS")
-# 
-# gr_noLX %>% filter(source == "d.l_edgar_v7 ~ d.lgdp_wb + d.lpop + d.lgdp_wb_sq + g.cdd + g.hdd" & year_range == "1990:2021" & b_size == 20 & ar == 0) %>% gen_p_only(.)
+gr_temp <- readRDS(here("output/temp/growth_rate_temp_nolux.RDS"))
+
+gr_temp %>% filter(source == "d.l_edgar_v7 ~ d.lgdp_wb + d.lpop + d.lgdp_wb_sq + g.cdd + g.hdd" & year_range == "1990:2021" & b_size == 20 & ar == 0 & p_val == 0.1) %>% gen_p_only(.)
 
 ```
 
@@ -941,15 +958,15 @@ gr_noLX %>% filter(source == "d.l_edgar_v7 ~ d.lgdp_wb + d.lpop + d.lgdp_wb_sq" 
 
 ```{r, echo = FALSE, cache = TRUE}
 
-# gr_noLX %>% filter(source == "d.l_edgar_v7 ~ d.lgdp_wb + d.lpop + d.lgdp_wb_sq + g.cdd + g.hdd" & year_range == "1990:2021" & p_val == 0.05 & b_size == 20 & ar == 0 & ets_yes == 0) %>% gen_p_only(.)
+gr_temp %>% filter(source == "d.l_edgar_v7 ~ d.lgdp_wb + d.lpop + d.lgdp_wb_sq + g.cdd + g.hdd" & year_range == "1990:2021" & b_size == 20 & ar == 0 & p_val == 0.05) %>% gen_p_only(.)
 
 ```
 
 ##### p = 0.01 {.tabset}
 
 ```{r, echo = FALSE, cache = TRUE}
-# 
-# gr_noLX %>% filter(source == "d.l_edgar_v7 ~ d.lgdp_wb + d.lpop + d.lgdp_wb_sq + g.cdd + g.hdd" & year_range == "1990:2021" & p_val == 0.01 & b_size == 20 & ar == 0 & ets_yes == 0) %>% gen_p_only(.)
+
+gr_temp %>% filter(source == "d.l_edgar_v7 ~ d.lgdp_wb + d.lpop + d.lgdp_wb_sq + g.cdd + g.hdd" & year_range == "1990:2021" & p_val == 0.01 & b_size == 20 & ar == 0) %>% gen_p_only(.)
 
 ```
 
@@ -957,15 +974,17 @@ gr_noLX %>% filter(source == "d.l_edgar_v7 ~ d.lgdp_wb + d.lpop + d.lgdp_wb_sq" 
 
 ```{r, echo = FALSE, cache = TRUE}
 
-# models %>% filter(source == "d.l_edgar_v7 ~ d.lgdp_wb + d.lpop + d.lgdp_wb_sq + g.cdd + g.hdd" & year_range == "1990:2021" & p_val == 0.001 & b_size == 20 & ar == 0 & ets_yes == 0) %>% gen_p_only(.)
+gr_temp %>% filter(source == "d.l_edgar_v7 ~ d.lgdp_wb + d.lpop + d.lgdp_wb_sq + g.cdd + g.hdd" & year_range == "1990:2021" & p_val == 0.001 & b_size == 20 & ar == 0) %>% gen_p_only(.)
 
 ```
 
 #### AR = 1 {.tabset}
 ##### p = 0.1 {.tabset}
-```{r, echo = FALSE, cache = TRUE}
 
-# gr_models %>% filter(source == "d.l_edgar_v7 ~ d.lgdp_wb + d.lpop + d.lgdp_wb_sq + g.cdd + g.hdd" & year_range == "1990:2021" & b_size == 20 & ar == 1) %>% gen_p_only(.)
+```{r, echo = FALSE, cache = TRUE}
+gr_temp <- readRDS(here("output/temp/growth_rate_temp_nolux.RDS"))
+
+gr_temp %>% filter(source == "d.l_edgar_v7 ~ d.lgdp_wb + d.lpop + d.lgdp_wb_sq + g.cdd + g.hdd" & year_range == "1990:2021" & b_size == 20 & ar == 1 & p_val == 0.1) %>% gen_p_only(.)
 
 ```
 
@@ -973,7 +992,7 @@ gr_noLX %>% filter(source == "d.l_edgar_v7 ~ d.lgdp_wb + d.lpop + d.lgdp_wb_sq" 
 
 ```{r, echo = FALSE, cache = TRUE}
 
-# models %>% filter(source == "d.l_edgar_v7 ~ d.lgdp_wb + d.lpop + d.lgdp_wb_sq + g.cdd + g.hdd" & year_range == "1990:2021" & p_val == 0.05 & b_size == 20 & ar == 1 & ets_yes == 0) %>% gen_p_only(.)
+gr_temp %>% filter(source == "d.l_edgar_v7 ~ d.lgdp_wb + d.lpop + d.lgdp_wb_sq + g.cdd + g.hdd" & year_range == "1990:2021" & b_size == 20 & ar == 1 & p_val == 0.05) %>% gen_p_only(.)
 
 ```
 
@@ -981,7 +1000,7 @@ gr_noLX %>% filter(source == "d.l_edgar_v7 ~ d.lgdp_wb + d.lpop + d.lgdp_wb_sq" 
 
 ```{r, echo = FALSE, cache = TRUE}
 
-# models %>% filter(source == "d.l_edgar_v7 ~ d.lgdp_wb + d.lpop + d.lgdp_wb_sq + g.cdd + g.hdd" & year_range == "1990:2021" & p_val == 0.01 & b_size == 20 & ar == 1 & ets_yes == 0) %>% gen_p_only(.)
+gr_temp %>% filter(source == "d.l_edgar_v7 ~ d.lgdp_wb + d.lpop + d.lgdp_wb_sq + g.cdd + g.hdd" & year_range == "1990:2021" & p_val == 0.01 & b_size == 20 & ar == 1) %>% gen_p_only(.)
 
 ```
 
@@ -989,7 +1008,7 @@ gr_noLX %>% filter(source == "d.l_edgar_v7 ~ d.lgdp_wb + d.lpop + d.lgdp_wb_sq" 
 
 ```{r, echo = FALSE, cache = TRUE}
 
-# models %>% filter(source == "d.l_edgar_v7 ~ d.lgdp_wb + d.lpop + d.lgdp_wb_sq + g.cdd + g.hdd" & year_range == "1990:2021" & p_val == 0.001 & b_size == 20 & ar == 1 & ets_yes == 0) %>% gen_p_only(.)
+gr_temp %>% filter(source == "d.l_edgar_v7 ~ d.lgdp_wb + d.lpop + d.lgdp_wb_sq + g.cdd + g.hdd" & year_range == "1990:2021" & p_val == 0.001 & b_size == 20 & ar == 1) %>% gen_p_only(.)
 
 ```
 
@@ -998,9 +1017,8 @@ gr_noLX %>% filter(source == "d.l_edgar_v7 ~ d.lgdp_wb + d.lpop + d.lgdp_wb_sq" 
 ##### p = 0.1 {.tabset}
 
 ```{r, echo = FALSE, cache = TRUE}
-# gr_noLX <- here("output/temp/growth_rate_nolux.RDS")
-# 
-# gr_noLX %>% filter(source == "d.l_edgar_v7 ~ d.lpop + g.cdd + g.hdd" & year_range == "1990:2021" & b_size == 20 & ar == 0) %>% gen_p_only(.)
+
+gr_temp %>% filter(source == "d.l_edgar_v7 ~ d.lpop + g.cdd + g.hdd" & year_range == "1990:2021" & b_size == 20 & ar == 0 & p_val == 0.1) %>% gen_p_only(.)
 
 ```
 
@@ -1008,7 +1026,7 @@ gr_noLX %>% filter(source == "d.l_edgar_v7 ~ d.lgdp_wb + d.lpop + d.lgdp_wb_sq" 
 
 ```{r, echo = FALSE, cache = TRUE}
 
-# gr_noLX %>% filter(source == "d.l_edgar_v7 ~ d.lpop + g.cdd + g.hdd" & year_range == "1990:2021" & p_val == 0.05 & b_size == 20 & ar == 0 & ets_yes == 0) %>% gen_p_only(.)
+gr_temp %>% filter(source == "d.l_edgar_v7 ~ d.lpop + g.cdd + g.hdd" & year_range == "1990:2021" & b_size == 20 & ar == 0 & p_val == 0.05) %>% gen_p_only(.)
 
 ```
 
@@ -1016,7 +1034,7 @@ gr_noLX %>% filter(source == "d.l_edgar_v7 ~ d.lgdp_wb + d.lpop + d.lgdp_wb_sq" 
 
 ```{r, echo = FALSE, cache = TRUE}
 
-# gr_noLX %>% filter(source == "d.l_edgar_v7 ~ d.lpop + g.cdd + g.hdd" & year_range == "1990:2021" & p_val == 0.01 & b_size == 20 & ar == 0 & ets_yes == 0) %>% gen_p_only(.)
+gr_temp %>% filter(source == "d.l_edgar_v7 ~ d.lpop + g.cdd + g.hdd" & year_range == "1990:2021" & b_size == 20 & ar == 0 & p_val == 0.01) %>% gen_p_only(.)
 
 ```
 
@@ -1024,15 +1042,16 @@ gr_noLX %>% filter(source == "d.l_edgar_v7 ~ d.lgdp_wb + d.lpop + d.lgdp_wb_sq" 
 
 ```{r, echo = FALSE, cache = TRUE}
 
-# models %>% filter(source == "d.l_edgar_v7 ~ d.lpop + g.cdd + g.hdd" & year_range == "1990:2021" & p_val == 0.001 & b_size == 20 & ar == 0 & ets_yes == 0) %>% gen_p_only(.)
+gr_temp %>% filter(source == "d.l_edgar_v7 ~ d.lpop + g.cdd + g.hdd" & year_range == "1990:2021" & b_size == 20 & ar == 0 & p_val == 0.001) %>% gen_p_only(.)
 
 ```
 
 #### AR = 1 {.tabset}
 ##### p = 0.1 {.tabset}
+
 ```{r, echo = FALSE, cache = TRUE}
 
-# gr_models %>% filter(source == "d.l_edgar_v7 ~ d.lpop + g.cdd + g.hdd" & year_range == "1990:2021" & b_size == 20 & ar == 1) %>% gen_p_only(.)
+gr_temp %>% filter(source == "d.l_edgar_v7 ~ d.lpop + g.cdd + g.hdd" & year_range == "1990:2021" & b_size == 20 & ar == 1 & p_val == 0.1) %>% gen_p_only(.)
 
 ```
 
@@ -1040,15 +1059,15 @@ gr_noLX %>% filter(source == "d.l_edgar_v7 ~ d.lgdp_wb + d.lpop + d.lgdp_wb_sq" 
 
 ```{r, echo = FALSE, cache = TRUE}
 
-# models %>% filter(source == "d.l_edgar_v7 ~ d.lpop + g.cdd + g.hdd" & year_range == "1990:2021" & p_val == 0.05 & b_size == 20 & ar == 1 & ets_yes == 0) %>% gen_p_only(.)
+gr_temp %>% filter(source == "d.l_edgar_v7 ~ d.lpop + g.cdd + g.hdd" & year_range == "1990:2021" & b_size == 20 & ar == 1 & p_val == 0.05) %>% gen_p_only(.)
 
 ```
 
 ##### p = 0.01 {.tabset}
 
 ```{r, echo = FALSE, cache = TRUE}
-# 
-# models %>% filter(source == "d.l_edgar_v7 ~ d.lpop + g.cdd + g.hdd" & year_range == "1990:2021" & p_val == 0.01 & b_size == 20 & ar == 1 & ets_yes == 0) %>% gen_p_only(.)
+
+gr_temp %>% filter(source == "d.l_edgar_v7 ~ d.lpop + g.cdd + g.hdd" & year_range == "1990:2021" & b_size == 20 & ar == 1 & p_val == 0.01) %>% gen_p_only(.)
 
 ```
 
@@ -1056,7 +1075,7 @@ gr_noLX %>% filter(source == "d.l_edgar_v7 ~ d.lgdp_wb + d.lpop + d.lgdp_wb_sq" 
 
 ```{r, echo = FALSE, cache = TRUE}
 
-# models %>% filter(source == "d.l_edgar_v7 ~ d.lpop + g.cdd + g.hdd" & year_range == "1990:2021" & p_val == 0.001 & b_size == 20 & ar == 1 & ets_yes == 0) %>% gen_p_only(.)
+gr_temp %>% filter(source == "d.l_edgar_v7 ~ d.lpop + g.cdd + g.hdd" & year_range == "1990:2021" & b_size == 20 & ar == 1 & p_val == 0.001) %>% gen_p_only(.)
 
 ```
 
@@ -1064,6 +1083,7 @@ gr_noLX %>% filter(source == "d.l_edgar_v7 ~ d.lgdp_wb + d.lpop + d.lgdp_wb_sq" 
 *Note:* Countries in which no break was detected are excluded from these overview plots.\
 
 ### Emissions {.tabset}
+#### Overview: Standard Models
 ```{r, echo = FALSE, fig.height = 16}
 
 mods <- readRDS(here("output/temp/nolux_simpleets.RDS"))
@@ -1096,19 +1116,19 @@ st_temp_ets_price <- temporary_ets %>% filter(source == "l_edgar_v7 ~ lgdp_wb + 
 temp_pop_ets_price <- temporary_ets %>% filter(source == "l_edgar_v7 ~ lpop + hdd + cdd + EU_ETS_05:ets_price + EU_ETS_08:ets_price + EU_ETS_13:ets_price" & p_val == 0.01 & year_range == "1990:2021" & b_size == 20 & ar == 0) %>% pull(is) %>% first %>% convert(., modname = "Temp & Pop w/ ETS price")
 
 comp_lux <- rbind(
-  #temp_pop_ets_price, 
-  temp_pop_ets, 
-  temp_pop, 
-  #st_temp_ets_price, 
-  st_temp_ets, 
-  st_temp, 
-  #st_ets_price, 
-  st_ets, 
+  #temp_pop_ets_price,
+  temp_pop_ets,
+  temp_pop,
+  #st_temp_ets_price,
+  st_temp_ets,
+  st_temp,
+  #st_ets_price,
+  st_ets,
   st_mod)
 
-comp_lux %>% 
-  group_by(id) %>% 
-  filter(!all(is.na(effect))) %>% 
+comp_lux %>%
+  group_by(id) %>%
+  filter(!all(is.na(effect))) %>%
   ggplot(aes_(x = ~time, y = ~model)) +
       geom_tile(aes(fill = effect), na.rm = NA) +
       #scale_fill_viridis_c(na.value = NA) +
@@ -1123,28 +1143,28 @@ comp_lux %>%
             strip.background = element_blank(),
             axis.text = element_text(size = 10, color = "black"),
             strip.text.y = element_text(size = 12, angle = 0)) +
-      labs(x = NULL, y = NULL, title= "Model Overview", subtitle = "Specs: p = 0.01; AR = 0")
+      labs(x = NULL, y = NULL, title= "Model Overview: Emissions w/o ETS Price", subtitle = "Specs: p = 0.01; AR = 0")
 
 
 ```
 
-### ETS & ETS Price {.tabset}
+#### Overview: w/ ETS & ETS Price
 ```{r, echo = FALSE, fig.height = 16}
 
 comp_ets <- rbind(
-  temp_pop_ets_price, 
-  temp_pop_ets, 
-  #temp_pop, 
-  st_temp_ets_price, 
-  st_temp_ets, 
-  #st_temp, 
-  st_ets_price, 
-  st_ets) 
+  temp_pop_ets_price,
+  temp_pop_ets,
+  #temp_pop,
+  st_temp_ets_price,
+  st_temp_ets,
+  #st_temp,
+  st_ets_price,
+  st_ets)
   #st_mod)
 
-comp_ets %>% 
-  group_by(id) %>% 
-  filter(!all(is.na(effect))) %>% 
+comp_ets %>%
+  group_by(id) %>%
+  filter(!all(is.na(effect))) %>%
   ggplot(aes_(x = ~time, y = ~model)) +
       geom_tile(aes(fill = effect), na.rm = NA) +
       #scale_fill_viridis_c(na.value = NA) +
@@ -1159,66 +1179,33 @@ comp_ets %>%
             strip.background = element_blank(),
             axis.text = element_text(size = 10, color = "black"),
             strip.text.y = element_text(size = 12, angle = 0)) +
-      labs(x = NULL, y = NULL, title= "Model Overview", subtitle = "Specs: p = 0.01; AR = 0")
+      labs(x = NULL, y = NULL, title= "Model Overview: Emissions w/ ETS & ETS Prices", subtitle = "Specs: p = 0.01; AR = 0")
 
 ```
 
-### Shares {.tabset}
-```{r, include = FALSE, echo = FALSE}
+#### Overview: YFE as TS
+```{r, echo = FALSE}
 
-org <- shares %>% separate(source, into = c("source","formula"), sep = "[~]") %>%
-  mutate(source = trimws(source),
-         formula = trimws(formula),
-         model = case_when(formula == "lgdp_wb + lpop + lgdp_wb_sq" ~ "Standard",                                                                           
-                           formula == "lgdp_wb + lpop + lgdp_wb_sq + hdd + cdd" ~ "Standard w/ Temp",
-                           formula == "lpop + hdd + cdd" ~ "Pop & Temp",                                                                                      
-                           formula == "lgdp_wb + lpop + lgdp_wb_sq + EU_ETS_05 + EU_ETS_08 + EU_ETS_13" ~ "Standard w/ ETS",
-                           formula == "lgdp_wb + lpop + lgdp_wb_sq + hdd + cdd + EU_ETS_05 + EU_ETS_08 + EU_ETS_13" ~ "Standard w/ Temp & ETS",
-                           formula == "lpop + hdd + cdd + EU_ETS_05 + EU_ETS_08 + EU_ETS_13" ~ "Pop & Temp w/ ETS",
-                           formula == "lgdp_wb + lpop + lgdp_wb_sq + EU_ETS_05:ets_price + EU_ETS_08:ets_price + EU_ETS_13:ets_price" ~ "Standard w/ ETS price",
-                           formula == "lgdp_wb + lpop + lgdp_wb_sq + hdd + cdd + EU_ETS_05:ets_price + EU_ETS_08:ets_price + EU_ETS_13:ets_price" ~ "Standard w/ Temp & ETS price",
-                           formula == "lpop + hdd + cdd + EU_ETS_05:ets_price + EU_ETS_08:ets_price + EU_ETS_13:ets_price" ~ "Pop & Temp w/ ETS price")) %>% 
-                             
-                             filter(p_val == 0.01 & year_range == "1990:2021")
+stan <- standard %>% mutate(model = case_when(source == "l_edgar_v7 ~ lgdp_wb + lpop + lgdp_wb_sq" ~ "Standard",
+                           source == "l_edgar_v7 ~ lgdp_wb + lpop + lgdp_wb_sq + hdd + cdd" ~ "Standard w/ Temp",
+                           source == "l_edgar_v7 ~ lpop + hdd + cdd" ~ "Pop & Temp",
+                           source == "l_edgar_v7 ~ lgdp_wb + lpop + lgdp_wb_sq + EU_ETS_05 + EU_ETS_08 + EU_ETS_13" ~ "Standard w/ ETS",
+                           source == "l_edgar_v7 ~ lgdp_wb + lpop + lgdp_wb_sq + hdd + cdd + EU_ETS_05 + EU_ETS_08 + EU_ETS_13" ~ "Standard w/ Temp & ETS",
+                           source == "l_edgar_v7 ~ lpop + hdd + cdd + EU_ETS_05 + EU_ETS_08 + EU_ETS_13" ~ "Pop & Temp w/ ETS",
+                           source == "l_edgar_v7 ~ lgdp_wb + lpop + lgdp_wb_sq + EU_ETS_05:ets_price + EU_ETS_08:ets_price + EU_ETS_13:ets_price" ~ "Standard w/ ETS price",
+                           source == "l_edgar_v7 ~ lgdp_wb + lpop + lgdp_wb_sq + hdd + cdd + EU_ETS_05:ets_price + EU_ETS_08:ets_price + EU_ETS_13:ets_price" ~ "Standard w/ Temp & ETS price",
+                           source == "l_edgar_v7 ~ lpop + hdd + cdd + EU_ETS_05:ets_price + EU_ETS_08:ets_price + EU_ETS_13:ets_price" ~ "Pop & Temp w/ ETS price")) %>%
+                             filter(p_val == 0.01 & year_range == "1990:2021" & ar == 0 & ets_yes %in% c(0,3))
 
-converted <- tibble()
-for(i in c("low_carbon_share_elec", "renewables_share_elec","fossil_share_elec","solar_share_elec",      "hydro_share_elec","wind_share_elec","nuclear_share_elec","oil_share_elec","coal_share_elec","gas_share_elec")){
-  print(i)
-  k <- org %>% filter(source == i) %>% nrow
-  print(k)
-  new <- tibble()
-  for(r in 1:k){
-    t <- org %>% filter(source == "low_carbon_share_elec") %>% slice(r)
-    new <- rbind(new, convert(first(t$is), modname = t$model))
-    #print(new)
-  }
-  new$indicator <- i
-  converted <- rbind(converted, new)
-}  
-
-for(n in unique(converted$indicator)){
-  p <- converted %>% filter(indicator == n) %>%
-  group_by(id) %>% 
-  filter(!all(is.na(effect))) %>% 
-  ggplot(aes_(x = ~time, y = ~model)) +
-      geom_tile(aes(fill = effect), na.rm = NA) +
-      #scale_fill_viridis_c(na.value = NA) +
-      scale_fill_gradient2(na.value = NA, name = "Effect")+
-      scale_x_continuous(expand = c(0,0)) +
-      scale_y_discrete(limits = rev, expand = c(0,0)) +
-      facet_grid(id~.) +
-      theme_bw() +
-      theme(panel.grid = element_blank(),
-            panel.border = element_rect(fill = NA),
-            #panel.spacing.y = unit(0, "lines"),
-            strip.background = element_blank(),
-            axis.text = element_text(size = 10, color = "black"),
-            strip.text.y = element_text(size = 12, angle = 0)) +
-      labs(x = NULL, y = NULL, title= paste0("Model Overview:",n), subtitle = "Specs: p = 0.01; AR = 0")
-
-print(p)
-}
+tfe <- tibble()
+for(s in 1:nrow(stan)){
+  temp <- stan %>% slice(s) %>% pull(is) %>% first
+  coefs <- tibble(year = temp$isatpanel.result$aux$mXnames, coef = temp$isatpanel.result$coefficients) %>%
+    filter(grepl("time", year)) %>% mutate(year = as.numeric(substr(year, 5,8)))
+  tfe <- rbind(tfe, cbind(coefs, model = stan$model[[s]]))
   
+}
+
+tfe %>% tibble %>% ggplot(aes(x = year, y = coef, color = model)) + geom_line() + facet_wrap(~model, scales = "free") +theme_minimal() +theme(legend.position = "none") + labs(x = "Year", y = "Magnitude of Year-Fixed Effects", main = "Year-fixed Effect as Time Series")
 
 ```
-
