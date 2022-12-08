@@ -178,7 +178,8 @@ df %>%
   ggplot(aes(x = year, y = elect_twh, color = Source)) +
   geom_line(na.rm = TRUE) +
   facet_wrap(~country, scales = "free") +
-  labs(x = "Year", y = "Electricity Generated (TWh)", title = "Electricity Generated per Source (TWh)")
+  labs(x = "Year", y = "Electricity Generated (TWh)", title = "Electricity Generated per Source (TWh)") +
+  theme_bw()
 ```
 
 #### By Source
@@ -190,7 +191,8 @@ df %>%
   ggplot(aes(x = year, y = elect_twh, color = Source)) +
   geom_line(na.rm = TRUE) +
   facet_wrap(~country, scales = "free") +
-  labs(x = "Year", y = "Electricity Generated (TWh)", title = "Electricity Generated per Source (TWh)")
+  labs(x = "Year", y = "Electricity Generated (TWh)", title = "Electricity Generated per Source (TWh)") +
+  theme_bw()
 
 ```
 
@@ -377,7 +379,7 @@ stand_disp %>%
 ```
 
 ## Electricity by Source: Shares {.tabset}
-This section only includes the aggregated measures of fossil (coal + gas + oil), renewable (solar + hydro + wind), low carbon (renewable + nuclear). For the model results with the component sources as outcome variables see here INCLUDE LINK!
+This section only includes the aggregated measures of fossil (coal + gas + oil), renewable (solar + hydro + wind), low carbon (renewable + nuclear). For the model results with the component sources as outcome variables see [here](https://ebbam.github.io/break_scoping/output/Share_Overview.html).
 
 ```{r elec share, echo = FALSE, results='asis'}
 
