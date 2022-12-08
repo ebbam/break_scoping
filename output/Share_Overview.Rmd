@@ -1,0 +1,342 @@
+---
+title: "Selected Results: Shares"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    dev: ragg_png
+---
+
+```{r set-options, echo=FALSE, cache=FALSE}
+options(width = 3000)
+```
+
+```{css, echo=FALSE}
+pre {
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, max.height = '300px', fig.width = 16, fig.height = 8) #fig.show="hold",,
+
+rm(list = ls())
+library(data.table)
+library(tidyverse)
+library(openxlsx)
+library(gets)
+library(getspanel)
+library(here)
+library(doParallel)
+library(gridExtra)
+library(conflicted)
+library(viridis)
+
+conflict_prefer("filter", "dplyr")
+conflict_prefer("first", "dplyr")
+conflict_prefer("lag", "dplyr")
+
+source(here("code/dicts.R"))
+
+# Standard models
+standard <- readRDS(here("output/temp/nolux_simpleets.RDS")) %>% 
+  #rbind(readRDS(here("output/temp/nolux_further_ets_20.RDS"))) %>% 
+  #rbind(readRDS(here("output/temp/temporary_ets.RDS"))) %>% 
+  rbind(readRDS(here("output/temp/mod_ets_price.RDS"))) %>%
+  filter(grepl("l_edgar_v7", source)) %>% 
+  mutate(ets_05 = ifelse(grepl("EU_ETS_05", source), 1, 0),
+         ets_08 = ifelse(grepl("EU_ETS_08", source), 1, 0),
+         ets_13 = ifelse(grepl("EU_ETS_13", source), 1, 0),
+         ets_yes = ets_05 + ets_08 + ets_13)
+
+# Shares
+shares <- readRDS(here("output/temp/shares_noar_nolux.RDS")) %>% 
+  rbind(readRDS(here("output/temp/shares_bysource_noar_nolux.RDS"))) %>% 
+  rbind(readRDS(here("output/temp/shares_bysource_ar_nolux.RDS"))) %>% 
+  rbind(readRDS(here("output/temp/mod_ets_price.RDS"))) %>%
+  filter(!grepl("l_edgar_v7", source)) %>% 
+        mutate(ets_05 = ifelse(grepl("EU_ETS_05", source), 1, 0),
+         ets_08 = ifelse(grepl("EU_ETS_08", source), 1, 0),
+         ets_13 = ifelse(grepl("EU_ETS_13", source), 1, 0),
+         ets_yes = ets_05 + ets_08 + ets_13)
+
+shares_disp <- shares %>% separate(source, into = c("dep","formula"), sep = "[~]", remove = FALSE) %>%
+  mutate(dep = str_to_title(gsub("_"," ", gsub("_elec", "", trimws(dep)))),
+         formula = trimws(formula),
+         mod_name = case_when(!grepl("cdd", source) ~ "Standard Controls",
+                              grepl("cdd", source) & grepl("lgdp", source) ~ "Standard Controls w. Temp",
+                              grepl("cdd", source) & !grepl("lgdp", source) ~ "Pop w. Temp"),
+         ets_spec = case_when(ets_yes == 0 ~ "w.o ETS",
+                              ets_yes == 3 & grepl("ets_price", source) ~ "w. ETS price",
+                              ets_yes == 3 & !grepl("ets_price", source) ~ "w. ETS")) %>% 
+                             filter(p_val %in% c(0.01) & year_range == "1990:2021" & !(dep %in% c("Low Carbon Share", "Renewables Share", "Fossil Share")))
+
+
+```
+
+
+```{r, echo = FALSE, include = FALSE}
+# Plotting functions
+
+f <- function(k) {
+        step <- k
+        function(y) seq(floor(min(y)), ceiling(max(y)), by = step)
+}
+
+# Arranges result plots (plot and plot_grid) and prints model results
+# Option to suppress model results using results = FALSE is required for automatic tabsetting.
+gen_p <- function(df, results = TRUE, auto = FALSE){
+  if(nrow(df) == 0){return("Empty data frame. Model likely not run.")}else{
+    for(i in 1:nrow(df)){
+      mt <- paste0(df$country_sample[i], " (", df$year_range[i],")", "; p.value: ",df$p_val[i],  "; AR: ",df$ar[i])
+      st <- paste0("Formula: ", df$source[i])
+      
+    res <- df %>% slice(i) %>% pull(is) %>% first
+  
+    pl <- res %>% 
+      plot(zero_line = FALSE) +
+        ggtitle(label = mt, subtitle = st) +
+      scale_x_continuous(breaks = f(10))
+    
+    pg <- res %>%
+      plot_grid() +
+      ggtitle(label = mt, subtitle = st)
+    grid.arrange(pl, pg, ncol = 2)
+
+    if(results == TRUE & auto == FALSE){
+        print(st)
+        print(mt)
+        print(res)
+    }else if(results == TRUE & auto == TRUE){
+        p <- invisible(capture.output(res$isatpanel.result))
+        # Spacing included to trick knitr into reading as verbatim code.
+        cat(c("                         \n", 
+              "                         \n", 
+              paste("                  ", st,'     \n'),
+              paste("                  ", mt,'     \n'),
+              paste("                  ", p,'     \n')))
+      }
+    }
+  }
+}
+
+# Data manipulation function: extracts plot_grid input data from getspanel
+# mod = df of models as created above. Minimum requirement is 2 columns (is =  isatpanel object, model = model name)
+# na.rm removes countries for which NO model reveals a break/effect
+convert <- function(mod){
+  if(nrow(mod) == 0){
+    print("No models to plot.")
+  }else{
+    c_mods <- tibble()
+    for(m in 1:nrow(mod)){
+      mod_name <- mod %>% slice(m) %>% pull(model)
+      # Currently, this extracts the data used to build the plot_grid in isatpanel; not ideal
+      grid_dat <- mod %>% slice(m) %>% pull(is) %>% first %>% plot_grid %>% ggplot_build
+      grid_dat <- grid_dat$plot$data
+      grid_dat$model <- mod_name
+      c_mods <- rbind(c_mods, grid_dat)
+    }
+  }
+  return(c_mods)
+}
+
+plot_comp <- function(mod, panel = "country", na.rm = TRUE){
+  tmp <- convert(mod)
+
+  if(panel == "model"){
+    tmp <- tmp %>% rename(id = model, model = id)
+  }else if(!(panel == "country")){
+    print("Error")
+    break}else{}
+
+  if(na.rm == TRUE){
+    tmp <- tmp %>% group_by(id) %>% filter(!all(is.na(effect)))
+    }
+
+  p <- tmp %>% ggplot(aes(x = time, y = model)) +
+      geom_tile(aes(fill = effect), na.rm = NA) +
+      scale_fill_gradient2(na.value = NA, name = "Effect")+
+      scale_x_continuous(expand = c(0,0)) +
+      scale_y_discrete(expand = c(0,0), limits = rev) +
+      facet_grid(id~.) +
+      theme_bw() +
+      theme(panel.grid = element_blank(),
+            panel.border = element_rect(fill = NA),
+            strip.background = element_blank(),
+            axis.text = element_text(size = 12, color = "black"),
+            strip.text.y = element_text(size = 14, angle = 0)) +
+      labs(x = NULL, y = NULL,title= "Model Overview")
+  
+  print(p)
+}
+
+# Similar function as convert but organises w/ respect to multiple outcome variables
+convert_mult <- function(mod){
+  if(nrow(mod) == 0){
+    print("No models to plot.")
+  }else{
+    c_mods <- tibble()
+    for(m in 1:nrow(mod)){
+      mod_name <- mod %>% slice(m) %>% pull(model)
+      dep_name <- mod %>% slice(m) %>% pull(dep)
+      # Currently, this extracts the data used to build the plot_grid in isatpanel
+      grid_dat <- mod %>% slice(m) %>% pull(is) %>% first %>% plot_grid %>% ggplot_build
+      grid_dat <- grid_dat$plot$data
+      grid_dat$model <- mod_name
+      grid_dat$dep <- dep_name
+      c_mods <- rbind(c_mods, grid_dat)
+    }
+  }
+  return(c_mods)
+}
+
+# Pass converted data frame (convert_mult)
+
+plot_country <- function(cmod, country, na.rm = FALSE){
+  cmod <- cmod %>% filter(id == country)
+
+  if(na.rm == TRUE){
+    cmod <- cmod %>% group_by(dep) %>% filter(!all(is.na(effect)))
+  }
+  # Replace NAs with 0 value so that cases in which only one model reveals an effect are displayed correctly (limitation of facet_grid)
+  cmod %>% mutate(effect = ifelse(is.na(effect), 0, effect)) %>%
+    group_by(dep) %>%
+    do(gg = {ggplot(., aes(x = time,y = model)) +
+        geom_tile(aes(fill = effect)) +
+        scale_fill_gradient2(na.value = NA, name = "Effect", oob = scales::squish) +
+        scale_x_continuous(expand = c(0,0)) +
+        scale_y_discrete(expand = c(0,0), limits = rev) +
+        facet_grid(dep~.) +
+        theme_bw() +
+        theme(panel.grid = element_blank(),
+              legend.position = "bottom",
+               strip.background = element_blank(),
+               axis.text = element_text(size = 12, color = "black"),
+               strip.text.y = element_text(size = 12)) +
+        labs(x = NULL, y = NULL)
+      }) %>%
+    .$gg %>% arrangeGrob(grobs = ., ncol = 1) %>% grid.arrange()
+}
+
+```
+
+
+## Electricity by Source: Shares {.tabset}
+
+```{r elec share, echo = FALSE, results='asis'}
+
+stand_disp <- standard %>%
+  mutate(mod_name = case_when(grepl("cdd", source) & grepl("lgdp", source) ~ "Standard Controls w. Temp",
+         grepl("cdd", source) & !grepl("lgdp", source) ~ "Pop w. Temp",
+         !grepl("cdd", source) ~ "Standard Controls"),
+         ets_spec = case_when(ets_yes == 0 ~ "w.o ETS",
+                              ets_yes == 3 & grepl("ets_price", source) ~ "w. ETS price",
+                              ets_yes == 3 & !grepl("ets_price", source) ~ "w. ETS")) %>%
+  filter(year_range == "1990:2021" & p_val == 0.01 & !is.na(ets_spec))
+
+ov_disp <- stand_disp %>% separate(source, into = c("dep","formula"), sep = "[~]", remove = FALSE) %>%
+  mutate(dep = "(Log) Emissions",
+         formula = trimws(formula)) %>%
+  rbind(shares_disp) %>%
+  mutate(model = paste(mod_name, ets_spec)) %>%
+  filter(p_val == 0.01)
+
+ov_disp %>%
+   dplyr::group_split(dep) %>%
+      purrr::iwalk(.,~{
+        ind <- unique(.x$dep)
+        cat('### ', ind, '{.tabset}   \n')
+        for(n in unique(.x$mod_name)){
+           cat('#### ', n, '{.tabset}   \n')
+          for(e in unique(.x$ets_spec)){
+            cat('##### ', e, '{.tabset}   \n')
+            for(a in unique(.x$ar)){
+              cat('###### AR = ', a, '   \n')
+              filter(.x, mod_name == n & ets_spec == e & ar == a) %>% gen_p(.,auto = TRUE)
+              cat('\n')
+              cat('\n')
+              }
+            cat('\n')
+            cat('\n')
+            }
+          cat('\n')
+          cat('\n')
+          }
+        cat('\n')
+        cat('\n')
+        })
+
+```
+
+## Model Overview {.tabset}
+*Note:* Countries in which no break was detected are excluded from these overview plots.\
+
+### Overview by country {.tabset}
+
+```{r, echo = FALSE, results = 'asis', fig.height = 16}
+
+ov_disp %>%
+   filter(ar == 0) %>% 
+   dplyr::group_split(dep) %>%
+      purrr::iwalk(.,~{
+        ind <- unique(.x$dep)
+        cat('#### ', ind, '{.tabset}   \n')
+        for(e in unique(.x$ets_yes)){
+            e_title <- ifelse(e == 3, "w. ETS", "w.o ETS")
+            cat('##### ', e_title, '   \n')
+              .x %>% filter(ets_yes == e) %>% plot_comp(.)
+            cat('\n')
+            cat('\n')
+        }
+        cat('\n')
+        cat('\n')
+      })
+
+```
+
+### Overview by model {.tabset}
+
+```{r, echo = FALSE, results = 'asis', fig.height = 16}
+
+ov_disp %>%
+  filter(ar == 0) %>% 
+   dplyr::group_split(dep) %>%
+      purrr::iwalk(.,~{
+        ind <- unique(.x$dep)
+        cat('#### ', ind, '{.tabset}   \n')
+        for(e in unique(.x$ets_yes)){
+            e_title <- ifelse(e == 3, "w. ETS", "w.o ETS")
+            cat('##### ', e_title, '   \n')
+              .x %>% filter(ets_yes == e) %>% plot_comp(., panel = "model")
+            cat('\n')
+            cat('\n')
+        }
+        cat('\n')
+        cat('\n')
+      })
+
+```
+
+### Country overview by outcome variable {.tabset}
+
+```{r, echo = FALSE, results = 'asis', fig.height = 16}
+
+
+ov_disp %>%
+  filter(ar == 0) %>%
+  convert_mult %>%
+      dplyr::group_split(id) %>%
+      purrr::iwalk(.,~{
+        c <- unique(.x$id)
+        if(!all(is.na(.x$effect))){
+          cat('#### ', c, '   \n')
+          plot_country(.x, country = c, na.rm = TRUE)
+          }
+        cat('\n')
+        cat('\n')
+      })
+
+```
+
+
