@@ -745,10 +745,9 @@ share_controls <- c("~ lgdp_wb + lpop + lgdp_wb_sq",
                  "~ lpop + hdd + cdd + EU_ETS_05 + EU_ETS_08 + EU_ETS_13")
 
 share_forms <- c(paste("low_carbon_share_elec", share_controls),
-                       paste("renewables_share_elec", share_controls),
-                             paste("fossil_share_elec", share_controls))
-
-source_forms <- c(paste("solar_share_elec", share_controls),
+                 paste("renewables_share_elec", share_controls),
+                 paste("fossil_share_elec", share_controls),
+                 paste("solar_share_elec", share_controls),
                   paste("hydro_share_elec", share_controls),
                   paste("wind_share_elec", share_controls),
                   paste("nuclear_share_elec", share_controls),
@@ -759,13 +758,13 @@ source_forms <- c(paste("solar_share_elec", share_controls),
 cl <- makeCluster(6)
 registerDoParallel(cl)
 
-shares_sources <- foreach(f = c(source_forms), .combine = rbind, .packages = c('tidyverse', 'getspanel')) %:%
+shares_sources <- foreach(f = c(share_forms), .combine = rbind, .packages = c('tidyverse', 'getspanel')) %:%
   #foreach(a = c(0,1), .combine = rbind) %:%
-  foreach(yr = c(1990, 2000), .combine = rbind) %:%
+  #foreach(yr = c(1990, 2000), .combine = rbind) %:%
   #foreach(b = c(10, 20, 30), .combine = rbind) %:%
-    foreach(p.value = c(0.05, 0.01, 0.001), .combine = rbind) %dopar% {
+    foreach(p.value = c(0.01, 0.001), .combine = rbind) %dopar% {
     dat <- shares_df %>%
-    filter(country %in% sel & year >= yr)
+    filter(country %in% sel[sel != "Luxembourg"] & year >= 1990)
       is <- isatpanel(
             data = dat,
             formula = as.formula(f),
@@ -773,7 +772,7 @@ shares_sources <- foreach(f = c(source_forms), .combine = rbind, .packages = c('
             effect = "twoways",
             iis = TRUE,
             fesis = TRUE,
-            ar = 0,
+            ar = 1,
             t.pval = p.value,
             max.block.size = 20
             )
@@ -784,11 +783,12 @@ shares_sources <- foreach(f = c(source_forms), .combine = rbind, .packages = c('
                           is = list(is),
                           iis = TRUE,
                           b_size = 20,
-                          ar = 0)
+                          ar = 1)
     }
 
+saveRDS(shares_sources, here("output/temp/shares_bysource_ar_nolux.RDS"))
 #saveRDS(shares_sources_nolux, here("output/temp/shares_bysource_noar_nolux.RDS"))
-saveRDS(shares_sources, here("output/temp/shares_bysource_noar.RDS"))
+#saveRDS(shares_sources, here("output/temp/shares_bysource_noar.RDS"))
 
 ```
 
