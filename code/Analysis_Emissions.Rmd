@@ -37,7 +37,6 @@ data <- readRDS(here("data/out/elec_emissions_panel_clean_22.RDS"))
 ```
 
 # Create controls, scale emissions (ktco2/ktco2e), other required transformations (FD, lags, growth rates)
-# 28/10: GDP (current US$) replaced with GDP (constant 2015 $US)
 
 Three available GDP indicators: 
 - WB GDP current US$ (gdp)   
@@ -79,21 +78,8 @@ df <- dfi %>% group_by(country) %>%
          
 ```
 
-# Check difference in GDPs
-```{r}
-
-df %>% 
-  filter(country %in% sel) %>% 
-  ggplot() +
-  geom_line(aes(x = year, y = lgdp), color = "blue", na.rm = TRUE) +
-  geom_line(aes(x = year, y = lgdp_oecd), color = "red", na.rm = TRUE) +
-  geom_line(aes(x = year, y = lgdp_wb), color = "black", linetype = "dashed", na.rm = TRUE) +
-  facet_wrap(vars(country), scales = "free")
-  
-```
-
-
-# Standard formula in log-levels and growth rates (fd logs)
+# With Luxembourg
+## Standard formula in log-levels and growth rates (fd logs)
 Uses WB GDP data in this instance
 ```{r}
 
@@ -114,7 +100,7 @@ form_ets <- c(paste(form, "+ EU_ETS_05"),
 
 ```
 
-# Standard log-level and growth rate formulas
+## Standard log-level and growth rate formulas
 504 models total
 ```{r}
 
@@ -153,67 +139,7 @@ saveRDS(models, here("output/final_results/standard_models.RDS"))
 
 ```
 
-# EXCLUDE: Formulas with weather controls (IEA data: 2000:2021)
-```{r}
-
-form_weather <- c(
-  # Integrating temperature controls (only valid for 2000:2021)
-  "l_edgar_v7 ~ lgdp_wb + lpop + lgdp_wb_sq + HDD16dailybypop + CDD18dailybypop",
-
-  # Controlling only for population and temperature (removing GDP) (only valid for 2000:2021)
-  "l_edgar_v7 ~ lpop + HDD16dailybypop + CDD18dailybypop"
-)
-
-form_ets_weather <- c(paste(form_weather, "+ EU_ETS_05"),
-              paste(form_weather, "+ EU_ETS_08"), 
-              paste(form_weather, "+ EU_ETS_13"), 
-              paste(form_weather, "+ EU_ETS_05 + EU_ETS_08"),
-              paste(form_weather, "+ EU_ETS_05 + EU_ETS_13"),
-              paste(form_weather, "+ EU_ETS_08 + EU_ETS_13"),
-              paste(form_weather, "+ EU_ETS_05 + EU_ETS_08 + EU_ETS_13"))
-
-```
-
-# Run weather controls
-Restricted to 2000:2021 with IEA data
-252 models
-```{r}
-
-cl <- makeCluster(6)
-registerDoParallel(cl)
-
-weather_models <- foreach(f = c(form_weather, form_ets_weather), .combine = rbind, .packages = c('tidyverse', 'getspanel')) %:%
-  foreach(a = c(0,1), .combine = rbind) %:%
-  foreach(b = c(10, 20, 30), .combine = rbind) %:%
-    foreach(p.value = c(0.05, 0.01, 0.001), .combine = rbind) %dopar% {
-    dat <- df %>% 
-    filter(country %in% sel & year >= 2000)
-      is <- isatpanel(
-            data = dat,
-            formula = as.formula(f),
-            index = c("country", "year"),
-            effect = "twoways",
-            iis = TRUE,
-            fesis = TRUE,
-            ar = a,
-            t.pval = p.value,
-            max.block.size = b
-            )
-          models = tibble(source = f, 
-                          country_sample = "EU15+selected", 
-                          year_range = paste0(min(dat$year),":",max(dat$year)), 
-                          p_val = p.value, 
-                          is = list(is),
-                          iis = TRUE,
-                          b_size = b,
-                          ar = a)
-    }
-
-#saveRDS(weather_models, here("output/final_results/weather_models.RDS"))
-
-```
-
-# Formulas with weather controls from manually calculated population-weighted CDD and HDD
+## Formulas with weather controls from manually calculated population-weighted CDD and HDD
 ```{r}
 
 df %>% filter(country %in% sel & year >= 1990) %>% select(year, country, HDD16dailybypop, CDD18dailybypop, hdd, cdd) %>% 
@@ -281,7 +207,7 @@ dd_calc_models <- foreach(f = c(form_dd, form_ets_dd), .combine = rbind, .packag
 ```
 
 
-# Growth rates with higher p-value
+## Growth rates with higher p-value
 12 models
 ```{r}
 
@@ -318,7 +244,7 @@ gr_models <- foreach(a = c(0,1), .combine = rbind, .packages = c('tidyverse', 'g
 
 ```
 
-# Formulas in levels w/ temp controls and ETS dummies
+## Formulas in levels ETS dummies
 ```{r}
 form_basic <- c(
 # Standard
@@ -328,7 +254,7 @@ form_basic <- c(
 
 ```
 
-# Run with standard 20 block size and no 5% sig value
+## CFESIS Enabled: Run with standard 20 block size and no 5% sig value
 ```{r}
 
 cfesis_models <- tibble()
@@ -370,7 +296,7 @@ saveRDS(here("output/final_results/cfesis_models_Xtemp_XETS.RDS"))
 
 ```
 
-# Run with standard 20 block size and no 5% sig value
+## TIS Enabled: Run with standard 20 block size and no 5% sig value
 ```{r}
 
 tis_test <- 
@@ -398,7 +324,8 @@ tis_test <-
                           ar = 0))
 ```
 
-# Selected sample WITHOUT LUXEMBOURG
+# WITHOUT Luxembourg
+# Standard models w/ weather and ETS
 ```{r}
 
 form_b <- c(form[1], form_dd)
@@ -487,7 +414,7 @@ m_nolux_addets %>% pull(is) %>% first %>% plot
 ```
 
 
-# Growth rates without Luxembourg
+## Growth rates
 12 models
 ```{r}
 
@@ -539,7 +466,8 @@ saveRDS(gr_nolux_alts, here("output/temp/growth_rate_temp_nolux.RDS"))
 ```
 
 
-# CCE: Standard
+# CCE
+## Standard
 ```{r} 
 ##### Manually Implementing CCE Estimator
 ####create x-sectional averages
@@ -622,7 +550,7 @@ saveRDS(pcce_models, here("output/final_results/pcce_models_twfeffects_nolux.RDS
 
 ```
 
-# CCE: Standard with Temp
+## Standard with Temp
 ```{r} 
 ##### Manually Implementing CCE Estimator
 ####create x-sectional averages
