@@ -52,30 +52,31 @@ standard <- readRDS(here("output/temp/nolux_simpleets.RDS")) %>%
          ets_13 = ifelse(grepl("EU_ETS_13", source), 1, 0),
          ets_yes = ets_05 + ets_08 + ets_13)
 
-# Shares
-shares <- readRDS(here("output/temp/shares_noar_nolux.RDS")) %>% 
-  rbind(readRDS(here("output/temp/shares_bysource_noar_nolux.RDS"))) %>% 
-  rbind(readRDS(here("output/temp/shares_bysource_ar_nolux.RDS"))) %>% 
-  rbind(readRDS(here("output/temp/mod_ets_price.RDS"))) %>%
-  filter(!grepl("l_edgar_v7", source)) %>% 
-  #rbind(readRDS(here("output/temp/temporary_ets_shares.RDS"))) %>% 
-        mutate(ets_05 = ifelse(grepl("EU_ETS_05", source), 1, 0),
+# Production models
+prod <- readRDS(here("output/temp/production_data_models.RDS")) %>% 
+  rbind(readRDS(here("output/temp/imports_export_models.RDS"))) %>% 
+  mutate(ets_05 = ifelse(grepl("EU_ETS_05", source), 1, 0),
          ets_08 = ifelse(grepl("EU_ETS_08", source), 1, 0),
          ets_13 = ifelse(grepl("EU_ETS_13", source), 1, 0),
-         ets_yes = ets_05 + ets_08 + ets_13)
+         ets_yes = ets_05 + ets_08 + ets_13) %>% 
+  separate(source, into = c("dep","formula"), sep = "[~]", remove = FALSE) %>%
+  mutate(dep = str_to_title(gsub("log ", "", gsub("_"," ", gsub("_electricity", "", trimws(dep))))),
+         formula = trimws(formula),
+         mod_name = case_when(!grepl("cdd", source) ~ "Standard Controls",
+                              grepl("cdd", source) & grepl("lgdp", source) ~ "Standard Controls w. Temp",
+                              grepl("cdd", source) & !grepl("lgdp", source) ~ "Pop w. Temp"),
+         ets_spec = case_when(ets_yes == 0 ~ "w.o ETS",
+                              ets_yes == 3 & grepl("ets_price", source) ~ "w. ETS price",
+                              ets_yes == 3 & !grepl("ets_price", source) ~ "w. ETS")) %>% 
+                             filter(p_val %in% c(0.01) & year_range == "1990:2021")
 
 
 ```
 
 # Overview:
-All models below were executed with impulse indicator saturation (IIS) enabled and a block size of 20. In order to avoid endless output, where reasonable, we present only the model specifications with all three ETS phase dummies (2005, 2008, 2013), a p-value threshold of 0.01, and spanning 1990-2021.\
+All models below were executed with impulse indicator saturation (IIS) enabled and a block size of 20. In order to avoid endless output, where reasonable, we present only the model specifications with GDP, population, weather controls, all three ETS phase dummies (2005, 2008, 2013) and ETS price, a p-value threshold of 0.01, and spanning 1990-2021.\
 
-*Country sample:* EU-15 (not including Luxembourg), United States, Canada, New Zealand, Australia, Japan, Switzerland\
-
-**Updates:**\
-- Luxembourg excluded\
-- ETS dummies interacted with ETS prices according to specification discussed on 30.11\
-- Use low-carbon- , fossil-, renewable-, and source-share of electricity generation as outcome variables\
+*Country sample:* EU-15 (excluding Luxembourg), United States, Canada, New Zealand, Australia, Japan, Switzerland\
 
 ```{r, include = FALSE, echo = FALSE}
 
@@ -109,90 +110,6 @@ df <- dfi %>% group_by(country) %>%
   mutate(EU_ETS_05 = ifelse(country %in% EU15 & year >= 2005, 1, 0),
          EU_ETS_08 = ifelse(country %in% EU15 & year >= 2008, 1, 0),
          EU_ETS_13 = ifelse(country %in% EU15 & year >= 2013, 1, 0))
-
-```
-
-## Electricity Share Data {.tabset}
-
-Below, an overview of the data used/available for measuring electricity by source of energy (low-carbon, renewable, fossil, coal, oil, gas, hydro, solar, wind, nuclear).
-
-*Source:* OWID via BP Statistical Review of World Energy and Ember Global and European Electricity Review
-
-### Electricity shares {.tabset}
-
-*Unit:* Share of electricity generation by source
-
-#### FF vs. LC
-```{r, echo = FALSE, cache = TRUE, warning = FALSE, fig.height=8, fig.width = 10}
-df %>%
-  mutate(fossil_share_elec = ifelse(is.na(fossil_share_elec), 100 - low_carbon_share_elec, fossil_share_elec)) %>%
-  select(country, year,
-         low_carbon_share_elec,
-         renewables_share_elec,
-         fossil_share_elec
-         ) %>%
-  filter(country %in% sel[sel != "Luxembourg"] & year >=1990) %>%
-  pivot_longer(!c(country, year), names_to = 'Source', values_to = 'share') %>%
-  ggplot(aes(x = year, y = share, color = Source)) +
-  geom_line(na.rm = TRUE) +
-  facet_wrap(~country, scales = "free") +
-  labs(x = "Year", y = "Share", title = "Share of Total Electricity Generated per Source") +
-  theme_bw()
-```
-
-#### By Source
-```{r, echo = FALSE, cache = TRUE, warning = FALSE, fig.height=8, fig.width = 10}
-df %>%
-  select(country, year,
-         # other_renewables_share_elec,
-         # other_renewables_share_elec_exc_biofuel,
-         biofuel_share_elec,
-         coal_share_elec,
-         oil_share_elec,
-         gas_share_elec,
-         nuclear_share_elec,
-         solar_share_elec,
-         wind_share_elec,
-         hydro_share_elec
-         ) %>%
-  filter(country %in% sel[sel != "Luxembourg"] & year >=1990) %>%
-  pivot_longer(!c(country, year), names_to = 'Source', values_to = 'share') %>%
-  ggplot(aes(x = year, y = share, color = Source)) +
-  geom_line(na.rm = TRUE) +
-  facet_wrap(~country, scales = "free") +
-  labs(x = "Year", y = "Share", title = "Share of Total Electricity Generated per Source") +
-  theme_bw()
-
-```
-
-### Electricity generation by source (TWh) {.tabset}
-
-*Unit:* Total electricity generated per source, measured in terawatt-hours
-
-#### FF vs. LC
-```{r, echo = FALSE, cache = TRUE, warning = FALSE, fig.height=8, fig.width = 10}
-df %>%
-  select(country, year, low_carbon_electricity, renewables_electricity, fossil_electricity) %>%
-  filter(country %in% sel & year >=1990) %>%
-  pivot_longer(!c(country, year), names_to = 'Source', values_to = 'elect_twh') %>%
-  ggplot(aes(x = year, y = elect_twh, color = Source)) +
-  geom_line(na.rm = TRUE) +
-  facet_wrap(~country, scales = "free") +
-  labs(x = "Year", y = "Electricity Generated (TWh)", title = "Electricity Generated per Source (TWh)") +
-  theme_bw()
-```
-
-#### By Source
-```{r, echo = FALSE, cache = TRUE, warning = FALSE, fig.height=8, fig.width = 10}
-df %>%
-  select(country, year, oil_electricity, gas_electricity, coal_electricity, solar_electricity, wind_electricity, hydro_electricity, nuclear_electricity) %>%
-  filter(country %in% sel & year >=1990) %>%
-  pivot_longer(!c(country, year), names_to = 'Source', values_to = 'elect_twh') %>%
-  ggplot(aes(x = year, y = elect_twh, color = Source)) +
-  geom_line(na.rm = TRUE) +
-  facet_wrap(~country, scales = "free") +
-  labs(x = "Year", y = "Electricity Generated (TWh)", title = "Electricity Generated per Source (TWh)") +
-  theme_bw()
 
 ```
 
@@ -353,59 +270,112 @@ stand_disp <- standard %>%
          ets_spec = case_when(ets_yes == 0 ~ "w.o ETS",
                               ets_yes == 3 & grepl("ets_price", source) ~ "w. ETS price",
                               ets_yes == 3 & !grepl("ets_price", source) ~ "w. ETS")) %>%
-  filter(year_range == "1990:2021" & p_val %in% c(0.01, 0.001) & !is.na(ets_spec))
+  filter(year_range == "1990:2021" & p_val %in% c(0.01) & !is.na(ets_spec))
 
 stand_disp %>%
-      dplyr::group_split(mod_name) %>%
+  filter(mod_name == "Standard Controls w. Temp" & ets_spec %in% c("w.o ETS", "w. ETS price")) %>% 
+      dplyr::group_split(ets_spec) %>%
       purrr::iwalk(.,~{
-        name <- unique(.x$mod_name)
+        name <- unique(.x$ets_spec)
         cat('### ', name, '{.tabset}   \n')
-          for(e in unique(.x$ets_spec)){
-            cat('#### ', e, '{.tabset}   \n')
+          # for(e in unique(.x$ets_spec)){
+          #   cat('### ', e, '{.tabset}   \n')
             for(a in unique(.x$ar)){
-            cat('##### AR = ', a, '   \n')
-            filter(.x, ets_spec == e & ar == a) %>% gen_p(.,auto = TRUE)
+            cat('#### AR = ', a, '   \n')
+            filter(.x, ar == a) %>% gen_p(.,auto = TRUE)
                 cat('\n')
                 cat('\n')
               }
             cat('\n')
             cat('\n')
-            }
-        cat('\n')
-        cat('\n')
+        #     }
+        # cat('\n')
+        # cat('\n')
       })
 
 
 ```
 
-## Electricity by Source: Shares {.tabset}
-This section only includes the aggregated measures of fossil (coal + gas + oil), renewable (solar + hydro + wind), low carbon (renewable + nuclear). For the model results with the component sources as outcome variables see [here](https://ebbam.github.io/break_scoping/output/Share_Overview.html).
 
-```{r elec share, echo = FALSE, results='asis'}
+### Model Overview {.tabset}
+*Note:* Countries in which no break was detected are excluded from these overview plots.\
 
-shares_disp <- shares %>% separate(source, into = c("dep","formula"), sep = "[~]", remove = FALSE) %>%
-  mutate(dep = str_to_title(gsub("_"," ", gsub("_elec", "", trimws(dep)))),
-         formula = trimws(formula),
-         mod_name = case_when(!grepl("cdd", source) ~ "Standard Controls",
-                              grepl("cdd", source) & grepl("lgdp", source) ~ "Standard Controls w. Temp",
-                              grepl("cdd", source) & !grepl("lgdp", source) ~ "Pop w. Temp"),
-         ets_spec = case_when(ets_yes == 0 ~ "w.o ETS",
-                              ets_yes == 3 & grepl("ets_price", source) ~ "w. ETS price",
-                              ets_yes == 3 & !grepl("ets_price", source) ~ "w. ETS")) %>% 
-                             filter(p_val %in% c(0.01) & year_range == "1990:2021" & dep %in% c("Low Carbon Share", "Renewables Share", "Fossil Share"))
+#### by country {.tabset}
+##### w.o ETS
+```{r, echo = FALSE, fig.height = 16}
+stand_disp %>% mutate(model = paste(mod_name, ets_spec)) %>% filter(p_val == 0.01 & ets_yes == 0 & ar == 0) %>% plot_comp(.)
 
- shares_disp %>% 
+```
+
+##### w. ETS
+```{r, echo = FALSE, fig.height = 16}
+
+stand_disp %>% mutate(model = paste(mod_name, ets_spec)) %>% filter(p_val == 0.01 & ets_yes == 3 & ar == 0) %>% plot_comp(.)
+
+```
+
+#### by model {.tabset}
+##### w.o ETS
+```{r, echo = FALSE, fig.height = 16}
+stand_disp %>% mutate(model = paste(mod_name, ets_spec)) %>% filter(p_val == 0.01 & ets_yes == 0 & ar == 0) %>%  plot_comp(., panel = "model")
+
+```
+
+##### w. ETS
+```{r, echo = FALSE, fig.height = 16}
+
+stand_disp %>% mutate(model = paste(mod_name, ets_spec)) %>% filter(p_val == 0.01 & ets_yes == 3 & ar == 0) %>% plot_comp(., panel = "model")
+
+```
+
+#### by outcome variable {.tabset}
+
+```{r, echo = FALSE, results = 'asis'}
+
+stand_disp %>% separate(source, into = c("dep","formula"), sep = "[~]", remove = FALSE) %>%
+  mutate(dep = "Emissions",
+         formula = trimws(formula)) %>%
+  mutate(model = paste(mod_name, ets_spec)) %>%
+  filter(p_val == 0.01 & ar == 0) %>%
+  convert_mult %>%
+      dplyr::group_split(id) %>%
+      purrr::iwalk(.,~{
+        c <- unique(.x$id)
+        if(!all(is.na(.x$effect))){
+          cat('##### ', c, '   \n')
+          plot_country(.x, country = c, na.rm = TRUE)
+          }
+        cat('\n')
+        cat('\n')
+      })
+
+```
+
+
+## Demand Channel: Generation, Demand, Imports, Exports {.tabset}
+
+```{r, echo = FALSE, results='asis'}
+
+dem_disp <- stand_disp %>% separate(source, into = c("dep","formula"), sep = "[~]", remove = FALSE) %>%
+  mutate(dep = "Emissions",
+         formula = trimws(formula)) %>%
+  rbind(prod) %>%
+  mutate(model = paste(mod_name, ets_spec)) %>% 
+  filter(p_val == 0.01)
+
+dem_disp %>%
+  filter(mod_name == "Standard Controls w. Temp" & ets_spec %in% c("w.o ETS", "w. ETS price")) %>%
    dplyr::group_split(dep) %>%
       purrr::iwalk(.,~{
         ind <- unique(.x$dep)
         cat('### ', ind, '{.tabset}   \n')
-        for(n in unique(.x$mod_name)){
-           cat('#### ', n, '{.tabset}   \n')
+        # for(n in unique(.x$mod_name)){
+        #    cat('#### ', n, '{.tabset}   \n')
           for(e in unique(.x$ets_spec)){
-            cat('##### ', e, '{.tabset}   \n')
+            cat('#### ', e, '{.tabset}   \n')
             for(a in unique(.x$ar)){
-              cat('###### AR = ', a, '   \n')
-              filter(.x, mod_name == n & ets_spec == e & ar == a) %>% gen_p(.,auto = TRUE)
+              cat('##### AR = ', a, '   \n')
+              filter(.x, ets_spec == e & ar == a) %>% gen_p(.,auto = TRUE)
               cat('\n')
               cat('\n')
               }
@@ -414,12 +384,83 @@ shares_disp <- shares %>% separate(source, into = c("dep","formula"), sep = "[~]
             }
           cat('\n')
           cat('\n')
-          }
-        cat('\n')
-        cat('\n')
+        #   }
+        # cat('\n')
+        # cat('\n')
         })
 
 ```
+
+### Model Overview {.tabset}
+*Note:* Countries in which no break was detected are excluded from these overview plots.\
+
+#### by country {.tabset}
+
+```{r, echo = FALSE, results = 'asis', fig.height = 16}
+
+dem_disp %>%
+   filter(ar == 0) %>%
+   dplyr::group_split(dep) %>%
+      purrr::iwalk(.,~{
+        ind <- unique(.x$dep)
+        cat('##### ', ind, '{.tabset}   \n')
+        for(e in unique(.x$ets_yes)){
+            e_title <- ifelse(e == 3, "w. ETS", "w.o ETS")
+            cat('###### ', e_title, '   \n')
+              .x %>% filter(ets_yes == e) %>% plot_comp(.)
+            cat('\n')
+            cat('\n')
+        }
+        cat('\n')
+        cat('\n')
+      })
+
+```
+
+#### by model {.tabset}
+
+```{r, echo = FALSE, results = 'asis', fig.height = 16}
+
+dem_disp %>%
+  filter(ar == 0) %>%
+   dplyr::group_split(dep) %>%
+      purrr::iwalk(.,~{
+        ind <- unique(.x$dep)
+        cat('##### ', ind, '{.tabset}   \n')
+        for(e in unique(.x$ets_yes)){
+            e_title <- ifelse(e == 3, "w. ETS", "w.o ETS")
+            cat('###### ', e_title, '   \n')
+              .x %>% filter(ets_yes == e) %>% plot_comp(., panel = "model")
+            cat('\n')
+            cat('\n')
+        }
+        cat('\n')
+        cat('\n')
+      })
+
+```
+
+#### by outcome variable {.tabset}
+
+```{r, echo = FALSE, results = 'asis', fig.height = 16}
+
+dem_disp %>%
+  filter(ar == 0) %>%
+  convert_mult %>%
+      dplyr::group_split(id) %>%
+      purrr::iwalk(.,~{
+        c <- unique(.x$id)
+        if(!all(is.na(.x$effect))){
+          cat('##### ', c, '   \n')
+          plot_country(.x, country = c, na.rm = TRUE)
+          }
+        cat('\n')
+        cat('\n')
+      })
+
+```
+
+
 
 ## Emissions: Growth Rates {.tabset}
 *Note: As Moritz mentioned, when looking at growth rates what we understand as "breaks" are represented by the grey impulse lines. I have therefore excluded the plots analogous to the right-hand ones above.*
@@ -452,60 +493,4 @@ readRDS(here("output/temp/growth_rate_standard_nolux.RDS")) %>%
 
 
 ```
-
-## Model Overview {.tabset}
-*Note:* Countries in which no break was detected are excluded from these overview plots.\
-
-### by country {.tabset}
-#### w.o ETS
-```{r, echo = FALSE, fig.height = 16}
-stand_disp %>% mutate(model = paste(mod_name, ets_spec)) %>% filter(p_val == 0.01 & ets_yes == 0 & ar == 0) %>% plot_comp(.)
-
-```
-
-#### w. ETS
-```{r, echo = FALSE, fig.height = 16}
-
-stand_disp %>% mutate(model = paste(mod_name, ets_spec)) %>% filter(p_val == 0.01 & ets_yes == 3 & ar == 0) %>% plot_comp(.)
-
-```
-
-### by model {.tabset}
-#### w.o ETS
-```{r, echo = FALSE, fig.height = 16}
-stand_disp %>% mutate(model = paste(mod_name, ets_spec)) %>% filter(p_val == 0.01 & ets_yes == 0 & ar == 0) %>%  plot_comp(., panel = "model")
-
-```
-
-#### w. ETS
-```{r, echo = FALSE, fig.height = 16}
-
-stand_disp %>% mutate(model = paste(mod_name, ets_spec)) %>% filter(p_val == 0.01 & ets_yes == 3 & ar == 0) %>% plot_comp(., panel = "model")
-
-```
-
-### by outcome variable {.tabset}
-
-```{r, echo = FALSE, results = 'asis'}
-
-stand_disp %>% separate(source, into = c("dep","formula"), sep = "[~]", remove = FALSE) %>%
-  mutate(dep = "(Log) Emissions",
-         formula = trimws(formula)) %>%
-  rbind(shares_disp) %>%
-  mutate(model = paste(mod_name, ets_spec)) %>%
-  filter(p_val == 0.01 & ar == 0) %>%
-  convert_mult %>%
-      dplyr::group_split(id) %>%
-      purrr::iwalk(.,~{
-        c <- unique(.x$id)
-        if(!all(is.na(.x$effect))){
-          cat('#### ', c, '   \n')
-          plot_country(.x, country = c, na.rm = TRUE)
-          }
-        cat('\n')
-        cat('\n')
-      })
-
-```
-
 
