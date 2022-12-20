@@ -1,5 +1,6 @@
 ---
-title: "Selected Results: Shares"
+title: "Share_Overview_Supp"
+author: "Ebba Mark"
 date: "`r Sys.Date()`"
 output: 
   html_document:
@@ -41,30 +42,28 @@ source(here("code/dicts.R"))
 
 # Standard models
 standard <- readRDS(here("output/temp/nolux_simpleets.RDS")) %>% 
-  #rbind(readRDS(here("output/temp/nolux_further_ets_20.RDS"))) %>% 
-  #rbind(readRDS(here("output/temp/temporary_ets.RDS"))) %>% 
   rbind(readRDS(here("output/temp/mod_ets_price.RDS"))) %>%
   filter(grepl("l_edgar_v7", source)) %>% 
   mutate(ets_05 = ifelse(grepl("EU_ETS_05", source), 1, 0),
          ets_08 = ifelse(grepl("EU_ETS_08", source), 1, 0),
          ets_13 = ifelse(grepl("EU_ETS_13", source), 1, 0),
-         ets_yes = ets_05 + ets_08 + ets_13)
+         ets_yes = ets_05 + ets_08 + ets_13) %>% 
+  mutate(mod_name = case_when(grepl("cdd", source) & grepl("lgdp", source) ~ "Standard Controls w. Temp",
+         grepl("cdd", source) & !grepl("lgdp", source) ~ "Pop w. Temp",
+         !grepl("cdd", source) ~ "Standard Controls"),
+         ets_spec = case_when(ets_yes == 0 ~ "w.o ETS",
+                              ets_yes == 3 & grepl("ets_price", source) ~ "w. ETS price",
+                              ets_yes == 3 & !grepl("ets_price", source) ~ "w. ETS")) %>%
+  filter(year_range == "1990:2021" & p_val == 0.01 & !is.na(ets_spec))
 
-# Shares
-shares <- readRDS(here("output/temp/shares_noar_nolux.RDS")) %>% 
-  rbind(readRDS(here("output/temp/shares_bysource_noar_nolux.RDS"))) %>% 
-  rbind(readRDS(here("output/temp/shares_bysource_ar_nolux.RDS"))) %>% 
-  rbind(readRDS(here("output/temp/mod_ets_price.RDS"))) %>%
-  filter(!grepl("oil", source) & !grepl("coal", source) & !grepl("gas", source)) %>% 
-  rbind(filter(readRDS(here("output/temp/supp_share_elec_oil_coal_gas.RDS")), !grepl("fossil", source))) %>% 
-  filter(!grepl("l_edgar_v7", source)) %>% 
-        mutate(ets_05 = ifelse(grepl("EU_ETS_05", source), 1, 0),
+# Production models
+prod <- readRDS(here("output/temp/production_data_models.RDS")) %>% 
+  mutate(ets_05 = ifelse(grepl("EU_ETS_05", source), 1, 0),
          ets_08 = ifelse(grepl("EU_ETS_08", source), 1, 0),
          ets_13 = ifelse(grepl("EU_ETS_13", source), 1, 0),
-         ets_yes = ets_05 + ets_08 + ets_13)
-
-shares_disp <- shares %>% separate(source, into = c("dep","formula"), sep = "[~]", remove = FALSE) %>%
-  mutate(dep = str_to_title(gsub("_"," ", gsub("_elec", "", trimws(dep)))),
+         ets_yes = ets_05 + ets_08 + ets_13) %>% 
+  separate(source, into = c("dep","formula"), sep = "[~]", remove = FALSE) %>%
+  mutate(dep = str_to_title(gsub("log ", "", gsub("_"," ", gsub("_electricity", "", trimws(dep))))),
          formula = trimws(formula),
          mod_name = case_when(!grepl("cdd", source) ~ "Standard Controls",
                               grepl("cdd", source) & grepl("lgdp", source) ~ "Standard Controls w. Temp",
@@ -72,17 +71,23 @@ shares_disp <- shares %>% separate(source, into = c("dep","formula"), sep = "[~]
          ets_spec = case_when(ets_yes == 0 ~ "w.o ETS",
                               ets_yes == 3 & grepl("ets_price", source) ~ "w. ETS price",
                               ets_yes == 3 & !grepl("ets_price", source) ~ "w. ETS")) %>% 
-                             filter(p_val %in% c(0.01) & year_range == "1990:2021" & dep %in% c("Low Carbon Share", "Renewables Share", "Fossil Share"))
-
+                             filter(p_val %in% c(0.01) & year_range == "1990:2021")
+  
 
 # Logit-transformed shares
 logit_shares <- readRDS(here("output/temp/logit_transformed_shares_ff_ren_lc.RDS")) %>%
         mutate(ets_05 = ifelse(grepl("EU_ETS_05", source), 1, 0),
          ets_08 = ifelse(grepl("EU_ETS_08", source), 1, 0),
          ets_13 = ifelse(grepl("EU_ETS_13", source), 1, 0),
+         ets_yes = ets_05 + ets_08 + ets_13)
+
+gen_source <- readRDS(here("output/temp/gen_by_source_mods.RDS")) %>%
+        mutate(ets_05 = ifelse(grepl("EU_ETS_05", source), 1, 0),
+         ets_08 = ifelse(grepl("EU_ETS_08", source), 1, 0),
+         ets_13 = ifelse(grepl("EU_ETS_13", source), 1, 0),
          ets_yes = ets_05 + ets_08 + ets_13) %>% 
   separate(source, into = c("dep","formula"), sep = "[~]", remove = FALSE) %>%
-  mutate(dep = str_to_title(gsub("_"," ", gsub("_elec", "", trimws(dep)))),
+  mutate(dep = str_to_title(gsub("log ", "", gsub("_"," ", gsub("_electricity", "", trimws(dep))))),
          formula = trimws(formula),
          mod_name = case_when(!grepl("cdd", source) ~ "Standard Controls",
                               grepl("cdd", source) & grepl("lgdp", source) ~ "Standard Controls w. Temp",
@@ -242,23 +247,23 @@ plot_country <- function(cmod, country, na.rm = FALSE){
 ```
 
 
-## Electricity by Source: Shares {.tabset}
+# Electricity by Source: Levels {.tabset}
 
 ```{r elec share, echo = FALSE, results='asis'}
 
-stand_disp <- standard %>%
-  mutate(mod_name = case_when(grepl("cdd", source) & grepl("lgdp", source) ~ "Standard Controls w. Temp",
-         grepl("cdd", source) & !grepl("lgdp", source) ~ "Pop w. Temp",
-         !grepl("cdd", source) ~ "Standard Controls"),
-         ets_spec = case_when(ets_yes == 0 ~ "w.o ETS",
-                              ets_yes == 3 & grepl("ets_price", source) ~ "w. ETS price",
-                              ets_yes == 3 & !grepl("ets_price", source) ~ "w. ETS")) %>%
-  filter(year_range == "1990:2021" & p_val == 0.01 & !is.na(ets_spec))
+# stand_disp <- standard %>%
+#   mutate(mod_name = case_when(grepl("cdd", source) & grepl("lgdp", source) ~ "Standard Controls w. Temp",
+#          grepl("cdd", source) & !grepl("lgdp", source) ~ "Pop w. Temp",
+#          !grepl("cdd", source) ~ "Standard Controls"),
+#          ets_spec = case_when(ets_yes == 0 ~ "w.o ETS",
+#                               ets_yes == 3 & grepl("ets_price", source) ~ "w. ETS price",
+#                               ets_yes == 3 & !grepl("ets_price", source) ~ "w. ETS")) %>%
+#   filter(year_range == "1990:2021" & p_val == 0.01 & !is.na(ets_spec))
 
-ov_disp <- stand_disp %>% separate(source, into = c("dep","formula"), sep = "[~]", remove = FALSE) %>%
+ov_disp <- standard %>% separate(source, into = c("dep","formula"), sep = "[~]", remove = FALSE) %>%
   mutate(dep = "(Log) Emissions",
          formula = trimws(formula)) %>%
-  rbind(shares_disp) %>%
+  rbind(gen_source) %>%
   mutate(model = paste(mod_name, ets_spec)) %>%
   filter(p_val == 0.01)
 
@@ -288,39 +293,6 @@ ov_disp %>%
         })
 
 ```
-
-## Electricity by Source: Shares (logit transformed) {.tabset}
-
-```{r elec share logit, echo = FALSE, results='asis'}
-
-
-logit_shares %>%
-   dplyr::group_split(dep) %>%
-      purrr::iwalk(.,~{
-        ind <- unique(.x$dep)
-        cat('### ', ind, '{.tabset}   \n')
-        for(n in unique(.x$mod_name)){
-           cat('#### ', n, '{.tabset}   \n')
-          for(e in unique(.x$ets_spec)){
-            cat('##### ', e, '{.tabset}   \n')
-            for(a in unique(.x$ar)){
-              cat('###### AR = ', a, '   \n')
-              filter(.x, mod_name == n & ets_spec == e & ar == a) %>% gen_p(.,auto = TRUE)
-              cat('\n')
-              cat('\n')
-              }
-            cat('\n')
-            cat('\n')
-            }
-          cat('\n')
-          cat('\n')
-          }
-        cat('\n')
-        cat('\n')
-        })
-
-```
-
 
 ## Model Overview {.tabset}
 *Note:* Countries in which no break was detected are excluded from these overview plots.\
@@ -392,4 +364,113 @@ ov_disp %>%
 
 ```
 
+
+
+# Demand Channel: Generation and Consumption {.tabset}
+
+```{r, echo = FALSE, results='asis'}
+
+dem_disp <- standard %>% separate(source, into = c("dep","formula"), sep = "[~]", remove = FALSE) %>%
+  mutate(dep = "(Log) Emissions",
+         formula = trimws(formula)) %>%
+  rbind(prod) %>%
+  mutate(model = paste(mod_name, ets_spec)) %>%
+  filter(p_val == 0.01)
+
+dem_disp %>%
+   dplyr::group_split(dep) %>%
+      purrr::iwalk(.,~{
+        ind <- unique(.x$dep)
+        cat('### ', ind, '{.tabset}   \n')
+        for(n in unique(.x$mod_name)){
+           cat('#### ', n, '{.tabset}   \n')
+          for(e in unique(.x$ets_spec)){
+            cat('##### ', e, '{.tabset}   \n')
+            for(a in unique(.x$ar)){
+              cat('###### AR = ', a, '   \n')
+              filter(.x, mod_name == n & ets_spec == e & ar == a) %>% gen_p(.,auto = TRUE)
+              cat('\n')
+              cat('\n')
+              }
+            cat('\n')
+            cat('\n')
+            }
+          cat('\n')
+          cat('\n')
+          }
+        cat('\n')
+        cat('\n')
+        })
+
+```
+
+## Model Overview {.tabset}
+*Note:* Countries in which no break was detected are excluded from these overview plots.\
+
+### Overview by country {.tabset}
+
+```{r, echo = FALSE, results = 'asis', fig.height = 16}
+
+dem_disp %>%
+   filter(ar == 0) %>% 
+   dplyr::group_split(dep) %>%
+      purrr::iwalk(.,~{
+        ind <- unique(.x$dep)
+        cat('#### ', ind, '{.tabset}   \n')
+        for(e in unique(.x$ets_yes)){
+            e_title <- ifelse(e == 3, "w. ETS", "w.o ETS")
+            cat('##### ', e_title, '   \n')
+              .x %>% filter(ets_yes == e) %>% plot_comp(.)
+            cat('\n')
+            cat('\n')
+        }
+        cat('\n')
+        cat('\n')
+      })
+
+```
+
+### Overview by model {.tabset}
+
+```{r, echo = FALSE, results = 'asis', fig.height = 16}
+
+dem_disp %>%
+  filter(ar == 0) %>% 
+   dplyr::group_split(dep) %>%
+      purrr::iwalk(.,~{
+        ind <- unique(.x$dep)
+        cat('#### ', ind, '{.tabset}   \n')
+        for(e in unique(.x$ets_yes)){
+            e_title <- ifelse(e == 3, "w. ETS", "w.o ETS")
+            cat('##### ', e_title, '   \n')
+              .x %>% filter(ets_yes == e) %>% plot_comp(., panel = "model")
+            cat('\n')
+            cat('\n')
+        }
+        cat('\n')
+        cat('\n')
+      })
+
+```
+
+### Country overview by outcome variable {.tabset}
+
+```{r, echo = FALSE, results = 'asis', fig.height = 16}
+
+
+dem_disp %>%
+  filter(ar == 0) %>%
+  convert_mult %>%
+      dplyr::group_split(id) %>%
+      purrr::iwalk(.,~{
+        c <- unique(.x$id)
+        if(!all(is.na(.x$effect))){
+          cat('#### ', c, '   \n')
+          plot_country(.x, country = c, na.rm = TRUE)
+          }
+        cat('\n')
+        cat('\n')
+      })
+
+```
 
