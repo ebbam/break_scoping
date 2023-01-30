@@ -1,0 +1,971 @@
+---
+title: "Full_Analysis"
+author: "Ebba Mark"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+# Load libraries
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+rm(list = ls())
+library(data.table)
+library(tidyverse)
+library(openxlsx)
+library(stringr)
+library(gets)
+library(getspanel)
+library(here)
+library(doParallel)
+library(fastDummies)
+library(janitor)
+library(plm)
+# 
+# install.packages(
+#   "https://github.com/gsucarrat/gets/raw/master/gets_devel.tar.gz",
+#   repos = NULL, type = "source"
+# )
+
+#devtools::install_github("moritzpschwarz/getspanel")
+
+source(here("code/dicts.R"))
+
+data <- readRDS(here("data/out/elec_emissions_panel_clean_22.RDS"))
+
+```
+
+# Create controls, scale emissions (ktco2/ktco2e), other required transformations (FD, lags, growth rates)
+
+Three available GDP indicators: 
+- WB GDP current US$ (gdp)   
+- OECD 2015 constant prices US$ (gdp_const_oecd)   
+- WB 2015 constant price $US (gdp_const) 
+
+NOTE: Canada is missing WB 2015 constant price US$ data points from 1990-1996, 
+Canada's WB TS has been replaced with the OECD data
+```{r}
+
+dfi <- data %>% 
+  mutate(gdp_sq = gdp^2,
+         gdp_wb_sq = gdp_const^2,
+         gdp_oecd_sq = gdp_const_oecd^2,
+         lpop = log(pop),
+         lgdp = log(gdp),
+         lgdp_wb = log(gdp_const),
+         lgdp_oecd = log(gdp_const_oecd),
+         lgdp_sq = log(gdp)^2,
+         lgdp_wb_sq = log(gdp_const)^2,
+         lgdp_oecd_sq = log(gdp_const_oecd)^2, 
+         edgar_v7_elec_ktco2 = edgar_v7_elec_mtco2*1000,
+         l_edgar_v7 = log(edgar_v7_elec_ktco2),
+         owid_1_elec_heat_ktco2e = owid_1_elec_heat_tco2e/1000,
+         owid_2_elec_ktco2e = owid_2_elec_mtco2e*1000,
+         bp_energy_ktco2 = bp_energy_mtco2*1000)
+
+df <- dfi %>% group_by(country) %>%
+  # Lags (3), first-difference (growth rate = fd in log) (EDGAR V7), lgdp (WB current, WB constant 2015, OECD constant 2015), lpop, lgdp_sq (WB current, WB constant 2015, OECD constant 2015)
+  mutate(across(c(l_edgar_v7, lgdp, lgdp_wb, lgdp_oecd, lpop, lgdp_sq, lgdp_wb_sq, lgdp_oecd_sq), list(l1 = ~lag(.x, n = 1L),
+         l2 = ~lag(.x, n = 2L),
+         l3 = ~lag(.x, n = 3L), 
+         d = ~c(NA, diff(.x, differences = 1))),
+          #g = ~(c(NA, diff(.x, differences = 1))/lag(.x, n = 1L))*100),
+         .names = "{.fn}.{.col}")) %>% 
+  mutate(EU_ETS_05 = ifelse(country %in% EU15 & year >= 2005, 1, 0),
+         EU_ETS_08 = ifelse(country %in% EU15 & year >= 2008, 1, 0),
+         EU_ETS_13 = ifelse(country %in% EU15 & year >= 2013, 1, 0))
+         
+```
+
+# Shares
+
+## Data check
+Share of electricity generation per fuel type
+Source: OWID via BP Statistical Review of World Energy and Ember Global and European Electricity Review
+
+```{r} 
+
+shares_df <- 
+  df %>%
+  mutate(fossil_share_elec = ifelse(is.na(fossil_share_elec), 100 - low_carbon_share_elec, fossil_share_elec)) %>%
+  filter(country %in% sel[sel != "Luxembourg"] & year >=1990) %>% 
+  select(country, year, ets_price,
+        l_edgar_v7,
+        lgdp_wb, lgdp_wb_sq, lpop, EU_ETS_05, EU_ETS_08, EU_ETS_13, hdd, cdd,
+        low_carbon_share_elec,
+        renewables_share_elec,
+        #other_renewables_share_elec,
+        #other_renewables_share_elec_exc_biofuel,
+        biofuel_share_elec,
+        fossil_share_elec,
+          coal_share_elec,
+          oil_share_elec,
+          gas_share_elec,
+          nuclear_share_elec,
+          solar_share_elec,
+          wind_share_elec,
+          hydro_share_elec,
+         #contains("_electricity"),
+         #-per_capita_electricity
+         )
+
+
+```
+
+## Formulas
+```{r}
+
+controls <- c("~ lgdp_wb + lpop + lgdp_wb_sq",
+                 "~ lgdp_wb + lpop + lgdp_wb_sq + hdd + cdd",
+                 "~ lpop + hdd + cdd")
+
+share_forms <- c(paste("low_carbon_share_elec", controls),
+                 paste("renewables_share_elec", controls),
+                 paste("fossil_share_elec", controls),
+                 paste("solar_share_elec", controls),
+                  paste("hydro_share_elec", controls),
+                  paste("wind_share_elec", controls),
+                  paste("nuclear_share_elec", controls),
+                  paste("oil_share_elec", controls),
+                  paste("coal_share_elec", controls),
+                  paste("gas_share_elec", controls))
+
+ets_covs <- c("+ EU_ETS_05 + EU_ETS_08 + EU_ETS_13")
+
+shares_ets <- paste(rep(share_forms, each = length(ets_covs)), ets_covs)
+
+
+```
+
+## Code: Standard
+Share of electricity generation per fuel type
+Source: OWID via BP Statistical Review of World Energy and Ember Global and European Electricity Review
+
+```{r} 
+
+cl <- makeCluster(6)
+registerDoParallel(cl)
+
+shares_sources <- foreach(f = c(share_forms), .combine = rbind, .packages = c('tidyverse', 'getspanel')) %:%
+  foreach(a = c(0,1), .combine = rbind) %:%
+  #foreach(b = c(10, 20, 30), .combine = rbind) %:%
+    foreach(p.value = c(0.05, 0.01, 0.001), .combine = rbind) %dopar% {
+    dat <- shares_df %>%
+    filter(country %in% sel[sel != "Luxembourg"] & year >= 1990)
+      is <- isatpanel(
+            data = dat,
+            formula = as.formula(f),
+            index = c("country", "year"),
+            effect = "twoways",
+            iis = TRUE,
+            fesis = TRUE,
+            ar = a,
+            t.pval = p.value,
+            max.block.size = 20
+            )
+          models = tibble(source = f,
+                          country_sample = "NOLUX_EU15+selected",
+                          year_range = paste0(min(dat$year),":",max(dat$year)),
+                          p_val = p.value,
+                          is = list(is),
+                          iis = TRUE,
+                          b_size = 20,
+                          ar = a)
+    }
+
+saveRDS(shares_sources, here("output/temp/shares_bysource_ar_nolux.RDS"))
+#saveRDS(shares_sources_nolux, here("output/temp/shares_bysource_noar_nolux.RDS"))
+#saveRDS(shares_sources, here("output/temp/shares_bysource_noar.RDS"))
+
+```
+
+## Code: ETS
+```{r}
+
+cl <- makeCluster(7)
+registerDoParallel(cl)
+
+temp_ets_prices <- foreach(f = c(shares_ets), .combine = rbind, .packages = c('tidyverse', 'getspanel')) %:%
+  foreach(a = c(0,1), .combine = rbind) %:%
+   #foreach(b = c(10, 20, 30), .combine = rbind) %:%
+     foreach(p.value = c(0.05, 0.01, 0.001), .combine = rbind) %dopar% {
+     dat <- df %>%
+     filter(country %in% sel[sel != "Luxembourg"] & year >= 1990) %>% 
+       mutate(ets_price = ifelse(year < 2005, 0, ets_price))
+       is <- isatpanel(
+            data = dat,
+             formula = as.formula(f),
+             index = c("country", "year"),
+             effect = "twoways",
+             iis = TRUE,
+             fesis = TRUE,
+             ar = a,
+             t.pval = p.value,
+             max.block.size = 20
+             )
+           temp_ets_prices = tibble(source = f,
+                           country_sample = "NOLUX_EU15+selected",
+                           year_range = paste0(min(dat$year),":",max(dat$year)),
+                          p_val = p.value,
+                           is = list(is),
+                           iis = TRUE,
+                           b_size = 20,
+                          ar = a)
+     }
+
+saveRDS(temp_ets_prices, here("output/temp/mod_ets_price.RDS"))
+
+#saveRDS(shares_ets, here("output/temp/shares_ets_noar.RDS"))
+saveRDS(temporary_ets_shares, here("output/temp/temporary_ets_shares.RDS"))
+
+```
+
+
+## Code: Standard (NUCLEAR)
+Share of electricity generation per fuel type
+Source: OWID via BP Statistical Review of World Energy and Ember Global and European Electricity Review
+
+```{r} 
+
+cl <- makeCluster(6)
+registerDoParallel(cl)
+
+nuclear_shares <- c("nuclear_share_elec ~ lgdp_wb + lpop + lgdp_wb_sq",
+                    "nuclear_share_elec ~ lgdp_wb + lpop + lgdp_wb_sq + hdd + cdd",
+                    "nuclear_share_elec ~ lpop + hdd + cdd",
+                    "nuclear_share_elec ~ lgdp_wb + lpop + lgdp_wb_sq + EU_ETS_05 + EU_ETS_08 + EU_ETS_13",
+                    "nuclear_share_elec ~ lgdp_wb + lpop + lgdp_wb_sq + hdd + cdd + EU_ETS_05 + EU_ETS_08 + EU_ETS_13", 
+                    "nuclear_share_elec ~ lpop + hdd + cdd + EU_ETS_05 + EU_ETS_08 + EU_ETS_13")             
+
+share_nuclear <- foreach(f = c(nuclear_shares), .combine = rbind, .packages = c('tidyverse', 'getspanel')) %:%
+  foreach(a = c(0,1), .combine = rbind) %:%
+  #foreach(b = c(10, 20, 30), .combine = rbind) %:%
+    foreach(p.value = c(0.05, 0.01, 0.001), .combine = rbind) %dopar% {
+    dat <- shares_df %>%
+    filter(country %in% sel[!(sel %in% c("Australia", "Austria", "Denmark", "Greece", "Ireland", "Italy", "Portugal", "New Zealand", "Luxembourg"))] & year >= 1990)
+      is <- isatpanel(
+            data = dat,
+            formula = as.formula(f),
+            index = c("country", "year"),
+            effect = "twoways",
+            iis = TRUE,
+            fesis = TRUE,
+            ar = a,
+            t.pval = p.value,
+            max.block.size = 20
+            )
+          models = tibble(source = f,
+                          country_sample = "EU_No_Zeros",
+                          year_range = paste0(min(dat$year),":",max(dat$year)),
+                          p_val = p.value,
+                          is = list(is),
+                          iis = TRUE,
+                          b_size = 20,
+                          ar = a)
+    }
+
+saveRDS(share_nuclear, here("output/temp/shares_nuclear_no_zeros.RDS"))
+
+```
+
+
+############################################################################################################################################
+# Logit-transformed Shares
+## Data
+```{r}
+
+logit_shares <- shares_df_simple %>%
+  mutate(fossil_share_elec = ifelse(is.na(fossil_share_elec), 100 - low_carbon_share_elec, fossil_share_elec)) %>%
+  filter(country %in% sel[sel!= "Luxembourg"] & year >=1990) %>% 
+  select(country, year, ets_price,
+       # l_edgar_v7,
+        lgdp_wb, lgdp_wb_sq, lpop, EU_ETS_05, EU_ETS_08, EU_ETS_13, hdd, cdd,
+        low_carbon_share_elec,
+        renewables_share_elec,
+        # other_renewables_share_elec,
+        # other_renewables_share_elec_exc_biofuel,
+        #biofuel_share_elec,
+        fossil_share_elec,
+        coal_share_elec,
+        oil_share_elec,
+        gas_share_elec,
+        nuclear_share_elec,
+        solar_share_elec,
+        wind_share_elec,
+        hydro_share_elec,
+         ) %>% ungroup %>% 
+  mutate(across(low_carbon_share_elec:hydro_share_elec, ~.x/100)) %>% 
+  mutate(across(low_carbon_share_elec:hydro_share_elec, ~log(.x/(1-.x)), .names = "logit_{.col}"))
+
+
+# prop_logit <- log(prop/(1-prop))
+# prop_fit <- exp(fit_logit)/(1+exp(fit_logit))
+#   mutate(across(logit_low_carbon_share_elec:logit_fossil_share_elec, ~exp(.x)/(1+ exp(.x)), .names = "test_{.col}"))
+
+```
+
+## Formulas
+```{r}
+
+logit_forms <- paste0("logit_", share_forms)
+
+logit_ets <- paste(rep(logit_forms, each = length(ets_covs)), ets_covs)
+
+```
+
+## Code: Standard
+```{r} 
+
+cl <- makeCluster(6)
+registerDoParallel(cl)
+
+logit_mods <- foreach(f = logit_forms[!grepl("coal", logit_forms) & !grepl("nuclear", logit_forms)], .combine = rbind, .packages = c('tidyverse', 'getspanel')) %:%
+  foreach(a = c(0,1), .combine = rbind) %:%
+    foreach(p.value = c(0.01, 0.001), .combine = rbind) %dopar% {
+      dat <- logit_shares
+      is <- isatpanel(
+            data = dat,
+            formula = as.formula(f),
+            index = c("country", "year"),
+            effect = "twoways",
+            iis = TRUE,
+            fesis = TRUE,
+            ar = a,
+            t.pval = p.value,
+            max.block.size = 20
+            )
+          models = tibble(source = f,
+                          country_sample = "NOLUX_EU15+selected",
+                          year_range = paste0(min(dat$year),":",max(dat$year)),
+                          p_val = p.value,
+                          is = list(is),
+                          iis = TRUE,
+                          b_size = 20,
+                          ar = a)
+    }
+
+```
+
+## Code: ETS
+```{r}
+cl <- makeCluster(6)
+registerDoParallel(cl)
+
+# 72 models
+logit_mods_ets <- foreach(f = c(logit_ets), .combine = rbind, .packages = c('tidyverse', 'getspanel')) %:%
+  foreach(a = c(0,1), .combine = rbind) %:%
+    foreach(p.value = c(0.01, 0.001), .combine = rbind) %dopar% {
+      dat <- logit_shares
+      is <- isatpanel(
+            data = dat,
+            formula = as.formula(f),
+            index = c("country", "year"),
+            effect = "twoways",
+            iis = TRUE,
+            fesis = TRUE,
+            ar = a,
+            t.pval = p.value,
+            max.block.size = 20
+            )
+          models = tibble(source = f,
+                          country_sample = "NOLUX_EU15+selected",
+                          year_range = paste0(min(dat$year),":",max(dat$year)),
+                          p_val = p.value,
+                          is = list(is),
+                          iis = TRUE,
+                          b_size = 20,
+                          ar = a)
+    }
+
+```
+
+## Code: Nuclear & Coal
+```{r}
+
+logit_brief_coal <- c(logit_forms, logit_ets)[grepl("coal", c(logit_forms, logit_ets))]
+logit_brief_nuclear <- c(logit_forms, logit_ets)[grepl("nuclear", c(logit_forms, logit_ets))]
+    
+cl <- makeCluster(6)
+registerDoParallel(cl)
+
+
+coal_logit <- foreach(f = c(logit_brief_coal), .combine = rbind, .packages = c('tidyverse', 'getspanel')) %:%
+ # foreach(a = c(0,1), .combine = rbind) %:%
+    foreach(p.value = c(0.01), .combine = rbind) %dopar% {
+    dat <- logit_shares %>% filter(country != "Switzerland")
+      is <- isatpanel(
+            data = dat,
+            formula = as.formula(f),
+            index = c("country", "year"),
+            effect = "twoways",
+            iis = TRUE,
+            fesis = TRUE,
+            ar = 0,
+            t.pval = p.value,
+            max.block.size = 20
+            )
+          models = tibble(source = f,
+                          country_sample = "EU_No_Zeros",
+                          year_range = paste0(min(dat$year),":",max(dat$year)),
+                          p_val = p.value,
+                          is = list(is),
+                          iis = TRUE,
+                          b_size = 20,
+                          ar = 0)
+    }
+
+nuclear_logit <- foreach(f = c(logit_brief_nuclear), .combine = rbind, .packages = c('tidyverse', 'getspanel')) %:%
+  foreach(a = c(0,1), .combine = rbind) %:%
+    foreach(p.value = c(0.01, 0.001), .combine = rbind) %dopar% {
+    dat <- logit_shares %>% 
+      filter(country %in% sel[!(sel %in% c("Australia", "Austria", "Denmark", "Greece", "Ireland", "Italy", "Portugal", "New Zealand", "Luxembourg"))] & year >= 1990)
+      is <- isatpanel(
+            data = dat,
+            formula = as.formula(f),
+            index = c("country", "year"),
+            effect = "twoways",
+            iis = TRUE,
+            fesis = TRUE,
+            ar = a,
+            t.pval = p.value,
+            max.block.size = 20
+            )
+          models = tibble(source = f,
+                          country_sample = "EU_No_Zeros",
+                          year_range = paste0(min(dat$year),":",max(dat$year)),
+                          p_val = p.value,
+                          is = list(is),
+                          iis = TRUE,
+                          b_size = 20,
+                          ar = a)
+    }
+
+logit_mods_ets %>% 
+  rbind(logit_mods) %>% 
+  filter(!grepl("coal", source) & !grepl("nuclear", source)) %>% 
+  rbind(coal_logit) %>% 
+  rbind(nuclear_logit)
+#saveRDS(here("output/temp/logit_transformed_shares_ff_ren_lc.RDS"))
+
+```
+
+# Levels (log)
+Unit: Electricity generation per source (TWH)
+Additional option: Electricity generation per fuel type, measured in terawatt-hours
+Source: OWID via BP Statistical Review of World Energy and Ember Global and European Electricity Review
+
+Difference between electricity generation and consumption here...ex. exported wind power 
+
+WARNING: replaced Switzerland and New Zealand's OWID data with IEA data - not consistent perhaps. Consider using ONLY IEA data (requires more investigation of inconsistencies between the two datasets and the IEA's categorization of coal, oil, and gas data: https://stats2.digitalresources.jisc.ac.uk/metadata/IEA/Elec/Electricity_Information_Documentation_2022Edition.pdf)
+```{r}
+
+gen <- df %>% 
+  filter(country %in% sel[sel != "Luxembourg"] & year >=1990) %>% 
+  select(country, year, ets_price,
+        # l_edgar_v7,
+         lgdp_wb, lgdp_wb_sq, lpop, EU_ETS_05, EU_ETS_08, EU_ETS_13, hdd, cdd,
+         electricity_generation,
+         low_carbon_electricity,                 
+         renewables_electricity,                 
+         fossil_electricity,
+         coal_electricity,
+         gas_electricity, 
+         hydro_electricity, 
+         nuclear_electricity,
+         oil_electricity, 
+         solar_electricity, 
+         wind_electricity) %>% 
+  rename(fossil_electricity_raw = fossil_electricity)
+  
+iea_elec <- readRDS(here("data/out/IEA_elec_data_by_source.RDS"))
+
+gen$coal_electricity[gen$country == "New Zealand"] <- iea_elec$sum_value[iea_elec$country == "New Zealand" & iea_elec$code == "coal"]
+gen$oil_electricity[gen$country == "New Zealand"] <- iea_elec$sum_value[iea_elec$country == "New Zealand" & iea_elec$code == "oil"]
+gen$gas_electricity[gen$country == "New Zealand"] <- iea_elec$sum_value[iea_elec$country == "New Zealand" & iea_elec$code == "gas"]
+
+gen$coal_electricity[gen$country == "Switzerland"] <- iea_elec$sum_value[iea_elec$country == "Switzerland" & iea_elec$code == "coal"]
+gen$oil_electricity[gen$country == "Switzerland"] <- iea_elec$sum_value[iea_elec$country == "Switzerland" & iea_elec$code == "oil"]
+gen$gas_electricity[gen$country == "Switzerland"] <- iea_elec$sum_value[iea_elec$country == "Switzerland" & iea_elec$code == "gas"]
+
+gen_df <- gen %>% 
+  mutate(fossil_electricity = coal_electricity + oil_electricity + gas_electricity) %>% 
+  mutate(across(electricity_generation:fossil_electricity, ~log(.x + 1), .names = "log_{.col}"))
+
+gen_df %>% 
+  select(country, year, contains("log")) %>%
+  pivot_longer(!c(country, year), names_to = "indic", values_to = "log_val") %>% 
+  ggplot(aes(x = year, y = log_val, color = indic)) +
+           geom_line() +
+    facet_wrap(~country, scales = "free")
+
+gen_df %>% select(year, country, contains("log"), -log_fossil_electricity_raw) %>% ungroup %>% filter(!complete.cases(.))
+
+
+gen_df %>% select(country, year, electricity_generation, coal_electricity, oil_electricity, gas_electricity) %>% filter(country %in% c("Switzerland", "New Zealand")) %>% 
+  mutate(coal_share_elec = (coal_electricity/electricity_generation)*100,
+         oil_share_elec = (oil_electricity/electricity_generation)*100,
+         gas_share_elec = (gas_electricity/electricity_generation)*100)
+
+```
+
+## Formulas
+```{r}
+
+source_lev_forms <-share_forms <- c(paste("log_low_carbon_electricity", controls),
+                 paste("log_renewables_electricity", controls),
+                 paste("log_fossil_electricity", controls),
+                 paste("log_solar_electricity", controls),
+                  paste("log_hydro_electricity", controls),
+                  paste("log_wind_electricity", controls),
+                  paste("log_nuclear_electricity", controls),
+                  paste("log_oil_electricity", controls),
+                  paste("log_coal_electricity", controls),
+                  paste("log_gas_electricity", controls))
+
+source_lev_ets <- paste(rep(source_lev_forms, each = length(ets_covs)), ets_covs)
+
+
+```
+
+## Code: Standard
+```{r} 
+
+cl <- makeCluster(6)
+registerDoParallel(cl)
+
+# 60 models?
+source_lev_mods <- foreach(f = c(source_lev_forms), .combine = rbind, .packages = c('tidyverse', 'getspanel')) %:%
+  foreach(a = c(0,1), .combine = rbind) %:%
+    foreach(p.value = c(0.01), .combine = rbind) %dopar% {
+      dat <- gen_df
+      is <- isatpanel(
+            data = dat,
+            formula = as.formula(f),
+            index = c("country", "year"),
+            effect = "twoways",
+            iis = TRUE,
+            fesis = TRUE,
+            ar = a,
+            t.pval = p.value,
+            max.block.size = 20
+            )
+          models = tibble(source = f,
+                          country_sample = "NOLUX_EU15+selected",
+                          year_range = paste0(min(dat$year),":",max(dat$year)),
+                          p_val = p.value,
+                          is = list(is),
+                          iis = TRUE,
+                          b_size = 20,
+                          ar = a)
+    }
+
+
+```
+
+## Code: ETS
+```{r}
+
+cl <- makeCluster(6)
+registerDoParallel(cl)
+
+# 120 models?
+source_lev_ets_mods <- foreach(f = c(source_lev_ets), .combine = rbind, .packages = c('tidyverse', 'getspanel')) %:%
+  foreach(a = c(0,1), .combine = rbind) %:%
+  #foreach(b = c(10, 20, 30), .combine = rbind) %:%
+    foreach(p.value = c(0.01), .combine = rbind) %dopar% {
+      dat <- gen_df
+      is <- isatpanel(
+            data = dat,
+            formula = as.formula(f),
+            index = c("country", "year"),
+            effect = "twoways",
+            iis = TRUE,
+            fesis = TRUE,
+            ar = a,
+            t.pval = p.value,
+            max.block.size = 20
+            )
+          models = tibble(source = f,
+                          country_sample = "NOLUX_EU15+selected",
+                          year_range = paste0(min(dat$year),":",max(dat$year)),
+                          p_val = p.value,
+                          is = list(is),
+                          iis = TRUE,
+                          b_size = 20,
+                          ar = a)
+    }
+
+source_lev_mods %>% 
+  rbind(source_lev_ets_mods) %>% 
+saveRDS(here("output/temp/gen_by_source_mods.RDS"))
+
+```
+
+## Code: Nuclear and Coal
+```{r}
+
+source_lev_coal <- c(source_lev_forms, source_lev_ets)[grepl("coal", c(source_lev_forms, source_lev_ets))]
+source_lev_nuclear <- c(source_lev_forms, source_lev_ets)[grepl("nuclear", c(source_lev_forms, source_lev_ets))]
+
+cl <- makeCluster(6)
+registerDoParallel(cl)
+
+coal_source <- foreach(f = c(source_lev_coal), .combine = rbind, .packages = c('tidyverse', 'getspanel')) %:%
+  foreach(a = c(0,1), .combine = rbind) %:%
+    foreach(p.value = c(0.01, 0.001), .combine = rbind) %dopar% {
+    dat <- gen_df %>% filter(country != "Switzerland")
+      is <- isatpanel(
+            data = dat,
+            formula = as.formula(f),
+            index = c("country", "year"),
+            effect = "twoways",
+            iis = TRUE,
+            fesis = TRUE,
+            ar = a,
+            t.pval = p.value,
+            max.block.size = 20
+            )
+          models = tibble(source = f,
+                          country_sample = "EU_No_Zeros",
+                          year_range = paste0(min(dat$year),":",max(dat$year)),
+                          p_val = p.value,
+                          is = list(is),
+                          iis = TRUE,
+                          b_size = 20,
+                          ar = a)
+    }
+
+nuclear_source <- foreach(f = c(source_lev_nuclear), .combine = rbind, .packages = c('tidyverse', 'getspanel')) %:%
+  foreach(a = c(0,1), .combine = rbind) %:%
+    foreach(p.value = c(0.01, 0.001), .combine = rbind) %dopar% {
+    dat <- gen_df %>% 
+      filter(country %in% sel[!(sel %in% c("Australia", "Austria", "Denmark", "Greece", "Ireland", "Italy", "Portugal", "New Zealand", "Luxembourg"))] & year >= 1990)
+      is <- isatpanel(
+            data = dat,
+            formula = as.formula(f),
+            index = c("country", "year"),
+            effect = "twoways",
+            iis = TRUE,
+            fesis = TRUE,
+            ar = a,
+            t.pval = p.value,
+            max.block.size = 20
+            )
+          models = tibble(source = f,
+                          country_sample = "EU_No_Zeros",
+                          year_range = paste0(min(dat$year),":",max(dat$year)),
+                          p_val = p.value,
+                          is = list(is),
+                          iis = TRUE,
+                          b_size = 20,
+                          ar = a)
+    }
+    
+source_lev_mods %>%
+  rbind(source_lev_ets_mods) %>% 
+  filter(!grepl("coal", source) & !grepl("nuclear", source)) %>% 
+  rbind(coal_source, nuclear_source) %>% saveRDS(here("output/temp/gen_by_source_mods.RDS"))
+
+```
+
+
+# Consumption/Production
+```{r}
+
+iea_supp <- readRDS(here("data/temp/iea_elec_data.RDS")) %>% 
+  filter(country != "Luxembourg") %>%
+  mutate(across(!c(country, year), log, .names = "{'log'}_{.col}" )) %>% 
+  select(country, year, log_elec_demand_twh)
+
+cons_df <- df %>%
+  filter(country %in% sel[sel != "Luxembourg"] & year >=1990) %>% 
+  select(country, year, 
+         ets_price,
+         l_edgar_v7,
+         lgdp_wb, lgdp_wb_sq, lpop, EU_ETS_05, EU_ETS_08, EU_ETS_13, 
+         hdd, cdd,
+         electricity_generation) %>% 
+  mutate(log_electricity_generation = log(electricity_generation)) %>% ungroup %>% 
+  left_join(., iea_supp, by = c('country', 'year'))
+
+cons_df %>% 
+  filter(country %in% sel[sel != "Luxembourg"] & year >= 1990) %>% 
+  select(country, year, lgdp_wb, lgdp_wb_sq, lpop, hdd, cdd, log_electricity_generation, log_elec_demand_twh) %>% 
+  filter(!complete.cases(.))
+
+```
+
+## Formulas
+```{r}
+
+prod_forms <- c(paste("log_electricity_generation", share_controls),
+                 paste("log_elec_demand_twh", share_controls))
+
+prod_ets <- paste(rep(prod_forms, each = length(ets_covs)), ets_covs)
+
+```
+
+
+## Code
+
+```{r}
+
+cl <- makeCluster(6)
+registerDoParallel(cl)
+
+prod_mods <- foreach(f = c(prod_forms, prod_ets), .combine = rbind, .packages = c('tidyverse', 'getspanel')) %:%
+  foreach(a = c(0,1), .combine = rbind) %:%
+  #foreach(b = c(10, 20, 30), .combine = rbind) %:%
+    foreach(p.value = c(0.05, 0.01, 0.001), .combine = rbind) %dopar% {
+    dat <- cons_df %>%
+    filter(country %in% sel[sel != "Luxembourg"] & year >= 1990)
+      is <- isatpanel(
+            data = dat,
+            formula = as.formula(f),
+            index = c("country", "year"),
+            effect = "twoways",
+            iis = TRUE,
+            fesis = TRUE,
+            ar = a,
+            t.pval = p.value,
+            max.block.size = 20
+            )
+          prod_mods = tibble(source = f,
+                          country_sample = "NOLUX_EU15+selected",
+                          year_range = paste0(min(dat$year),":",max(dat$year)),
+                          p_val = p.value,
+                          is = list(is),
+                          iis = TRUE,
+                          b_size = 20,
+                          ar = a)
+    }
+
+saveRDS(prod_mods, here("output/temp/production_data_models.RDS"))
+
+
+prod_mods <- readRDS(here("output/temp/production_data_models.RDS"))
+
+```
+
+
+# Imports/Exports
+```{r}
+
+iea_imp <- readRDS(here("data/temp/iea_elec_data.RDS")) %>% 
+  filter(country != "Luxembourg") %>%
+  select(country, year, exports_elec_twh, imports_elec_twh) %>% 
+  mutate(log_imports_elec_twh = log(imports_elec_twh + 1), log_exports_elec_twh = log(exports_elec_twh + 1))
+
+cons_df <- df %>%
+  filter(country %in% sel[sel != "Luxembourg"] & year >=1990) %>% 
+  select(country, year, 
+         ets_price,
+         l_edgar_v7,
+         lgdp_wb, lgdp_wb_sq, lpop, EU_ETS_05, EU_ETS_08, EU_ETS_13, 
+         hdd, cdd) %>% 
+  ungroup %>% 
+  left_join(., iea_imp, by = c('country', 'year'))
+
+cons_df %>% 
+  filter(country %in% sel[sel != "Luxembourg"] & year >= 1990) %>% 
+  select(country, year, lgdp_wb, lgdp_wb_sq, lpop, hdd, cdd, log_imports_elec_twh, log_exports_elec_twh) %>% 
+  filter(!complete.cases(.))
+
+cons_df %>% 
+  ggplot(aes(x = year)) +
+  geom_line(aes(y = log_imports_elec_twh)) +
+  geom_line(aes(y = log_exports_elec_twh)) +
+  facet_wrap(~country, scales = "free")
+
+```
+
+## Formulas
+```{r}
+
+ports_forms <- c(paste("log_imports_elec_twh", controls),
+                 paste("log_exports_elec_twh", controls))
+
+ports_ets <- paste(rep(ports_forms, each = length(ets_covs)), ets_covs)
+
+```
+
+
+## Code
+
+```{r}
+
+cl <- makeCluster(6)
+registerDoParallel(cl)
+
+ports_mods <- foreach(f = c(ports_forms, ports_ets), .combine = rbind, .packages = c('tidyverse', 'getspanel')) %:%
+  foreach(a = c(0,1), .combine = rbind) %:%
+  #foreach(b = c(10, 20, 30), .combine = rbind) %:%
+    foreach(p.value = c(0.01), .combine = rbind) %dopar% {
+    dat <- cons_df %>%
+    filter(country %in% sel[!(sel %in% c("Luxembourg", "Australia", "Japan", "New Zealand"))] & year >= 1990)
+      is <- isatpanel(
+            data = dat,
+            formula = as.formula(f),
+            index = c("country", "year"),
+            effect = "twoways",
+            iis = TRUE,
+            fesis = TRUE,
+            ar = a,
+            t.pval = p.value,
+            max.block.size = 20
+            )
+          prod_mods = tibble(source = f,
+                          country_sample = "EU_No_Zeros",
+                          year_range = paste0(min(dat$year),":",max(dat$year)),
+                          p_val = p.value,
+                          is = list(is),
+                          iis = TRUE,
+                          b_size = 20,
+                          ar = a)
+    }
+
+saveRDS(ports_mods, here("output/temp/imports_export_models.RDS"))
+
+```
+
+# Supplemental Shares (NZ & Switzerland corrected)
+Additional option: Electricity generation per fuel type, measured in terawatt-hours
+Source: OWID via BP Statistical Review of World Energy and Ember Global and European Electricity Review
+```{r}
+
+shares_df_simple <- shares_df
+gen_simple <- gen_df %>% select(country, year, electricity_generation, coal_electricity, oil_electricity, gas_electricity) %>% filter(country %in% c("Switzerland", "New Zealand")) %>% 
+  mutate(coal_share_elec = (coal_electricity/electricity_generation)*100,
+         oil_share_elec = (oil_electricity/electricity_generation)*100,
+         gas_share_elec = (gas_electricity/electricity_generation)*100)
+
+shares_df_simple$coal_share_elec[shares_df_simple$country == "New Zealand"] <- gen_simple$coal_share_elec[gen_simple$country == "New Zealand"]
+shares_df_simple$oil_share_elec[shares_df_simple$country == "New Zealand"] <- gen_simple$oil_share_elec[gen_simple$country == "New Zealand"]
+shares_df_simple$gas_share_elec[shares_df_simple$country == "New Zealand"] <- gen_simple$gas_share_elec[gen_simple$country == "New Zealand"]
+
+shares_df_simple$coal_share_elec[shares_df_simple$country == "Switzerland"] <- gen_simple$coal_share_elec[gen_simple$country == "Switzerland"]
+shares_df_simple$oil_share_elec[shares_df_simple$country == "Switzerland"] <- gen_simple$oil_share_elec[gen_simple$country == "Switzerland"]
+shares_df_simple$gas_share_elec[shares_df_simple$country == "Switzerland"] <- gen_simple$gas_share_elec[gen_simple$country == "Switzerland"]
+
+
+```
+
+## Formulas
+```{r}
+
+share_brief_forms <- c(paste("fossil_share_elec", controls),
+                  paste("oil_share_elec", controls),
+                  paste("coal_share_elec", controls),
+                  paste("gas_share_elec", controls))
+
+share_brief_ets <- paste(rep(share_brief_forms, each = length(ets_covs)), ets_covs)
+
+```
+
+## Code: Standard
+```{r}
+
+cl <- makeCluster(6)
+registerDoParallel(cl)
+
+# 24 models
+supp_shares <- foreach(f = c(share_brief_forms), .combine = rbind, .packages = c('tidyverse', 'getspanel')) %:%
+  foreach(a = c(0,1), .combine = rbind) %:%
+    foreach(p.value = c(0.01), .combine = rbind) %dopar% {
+    dat <- shares_df_simple
+      is <- isatpanel(
+            data = dat,
+            formula = as.formula(f),
+            index = c("country", "year"),
+            effect = "twoways",
+            iis = TRUE,
+            fesis = TRUE,
+            ar = a,
+            t.pval = p.value,
+            max.block.size = 20
+            )
+          models = tibble(source = f,
+                          country_sample = "NOLUX_EU15+selected",
+                          year_range = paste0(min(dat$year),":",max(dat$year)),
+                          p_val = p.value,
+                          is = list(is),
+                          iis = TRUE,
+                          b_size = 20,
+                          ar = a)
+    }
+
+```
+
+## Code: ETS
+```{r}
+cl <- makeCluster(6)
+registerDoParallel(cl)
+
+supp_shares_ets <- foreach(f = c(share_brief_ets), .combine = rbind, .packages = c('tidyverse', 'getspanel')) %:%
+  foreach(a = c(0,1), .combine = rbind) %:%
+    foreach(p.value = c(0.01), .combine = rbind) %dopar% {
+    dat <- shares_df_simple
+      is <- isatpanel(
+            data = dat,
+            formula = as.formula(f),
+            index = c("country", "year"),
+            effect = "twoways",
+            iis = TRUE,
+            fesis = TRUE,
+            ar = a,
+            t.pval = p.value,
+            max.block.size = 20
+            )
+          models = tibble(source = f,
+                          country_sample = "NOLUX_EU15+selected",
+                          year_range = paste0(min(dat$year),":",max(dat$year)),
+                          p_val = p.value,
+                          is = list(is),
+                          iis = TRUE,
+                          b_size = 20,
+                          ar = a)
+    }
+```
+
+## Code: Coal
+```{r}
+
+share_brief_coal <- c(share_brief_forms, share_brief_ets)[grepl("coal", c(share_brief_forms, share_brief_ets))]
+
+cl <- makeCluster(6)
+registerDoParallel(cl)
+
+# 24 models
+coal_shares <- foreach(f = c(share_brief_coal), .combine = rbind, .packages = c('tidyverse', 'getspanel')) %:%
+  foreach(a = c(0,1), .combine = rbind) %:%
+    foreach(p.value = c(0.01, 0.001), .combine = rbind) %dopar% {
+    dat <- shares_df_simple %>% filter(country != "Switzerland")
+      is <- isatpanel(
+            data = dat,
+            formula = as.formula(f),
+            index = c("country", "year"),
+            effect = "twoways",
+            iis = TRUE,
+            fesis = TRUE,
+            ar = a,
+            t.pval = p.value,
+            max.block.size = 20
+            )
+          models = tibble(source = f,
+                          country_sample = "EU_No_Zeros",
+                          year_range = paste0(min(dat$year),":",max(dat$year)),
+                          p_val = p.value,
+                          is = list(is),
+                          iis = TRUE,
+                          b_size = 20,
+                          ar = a)
+    }
+
+supp_shares %>% 
+  rbind(supp_shares_ets) %>% 
+  filter(!grepl("coal", source)) %>% 
+  rbind(coal_shares) %>% 
+saveRDS(here("output/temp/supp_share_elec_oil_coal_gas.RDS"))
+
+```
