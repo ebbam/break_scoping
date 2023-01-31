@@ -273,7 +273,7 @@ stand_disp <- standard %>%
   filter(year_range == "1990:2021" & p_val %in% c(0.01) & !is.na(ets_spec))
 
 stand_disp %>%
-  filter(mod_name == "Standard Controls w. Temp" & ets_spec %in% c("w.o ETS", "w. ETS price")) %>% 
+  filter(mod_name == "Standard Controls w. Temp" & ets_spec %in% c("w.o ETS", "w. ETS")) %>% 
       dplyr::group_split(ets_spec) %>%
       purrr::iwalk(.,~{
         name <- unique(.x$ets_spec)
@@ -310,7 +310,7 @@ stand_disp %>% mutate(model = paste(mod_name, ets_spec)) %>% filter(p_val == 0.0
 ##### w. ETS
 ```{r, echo = FALSE, fig.height = 16}
 
-stand_disp %>% mutate(model = paste(mod_name, ets_spec)) %>% filter(p_val == 0.01 & ets_yes == 3 & ar == 0) %>% plot_comp(.)
+stand_disp %>% mutate(model = paste(mod_name, ets_spec)) %>% filter(p_val == 0.01 & ets_spec == "w. ETS" & ar == 0) %>% plot_comp(.)
 
 ```
 
@@ -324,7 +324,7 @@ stand_disp %>% mutate(model = paste(mod_name, ets_spec)) %>% filter(p_val == 0.0
 ##### w. ETS
 ```{r, echo = FALSE, fig.height = 16}
 
-stand_disp %>% mutate(model = paste(mod_name, ets_spec)) %>% filter(p_val == 0.01 & ets_yes == 3 & ar == 0) %>% plot_comp(., panel = "model")
+stand_disp %>% mutate(model = paste(mod_name, ets_spec)) %>% filter(p_val == 0.01 & ets_spec == "w. ETS" & ar == 0) %>% plot_comp(., panel = "model")
 
 ```
 
@@ -336,7 +336,7 @@ stand_disp %>% separate(source, into = c("dep","formula"), sep = "[~]", remove =
   mutate(dep = "Emissions",
          formula = trimws(formula)) %>%
   mutate(model = paste(mod_name, ets_spec)) %>%
-  filter(p_val == 0.01 & ar == 0) %>%
+  filter(p_val == 0.01 & ar == 0 & ets_spec != "w. ETS price") %>%
   convert_mult %>%
       dplyr::group_split(id) %>%
       purrr::iwalk(.,~{
@@ -364,7 +364,7 @@ dem_disp <- stand_disp %>% separate(source, into = c("dep","formula"), sep = "[~
   filter(p_val == 0.01)
 
 dem_disp %>%
-  filter(mod_name == "Standard Controls w. Temp" & ets_spec %in% c("w.o ETS", "w. ETS price")) %>%
+  filter(mod_name == "Standard Controls w. Temp" & ets_spec %in% c("w.o ETS", "w. ETS")) %>%
    dplyr::group_split(dep) %>%
       purrr::iwalk(.,~{
         ind <- unique(.x$dep)
@@ -399,7 +399,7 @@ dem_disp %>%
 ```{r, echo = FALSE, results = 'asis', fig.height = 16}
 
 dem_disp %>%
-   filter(ar == 0) %>%
+   filter(ar == 0 & ets_spec != "w. ETS price") %>%
    dplyr::group_split(dep) %>%
       purrr::iwalk(.,~{
         ind <- unique(.x$dep)
@@ -422,7 +422,7 @@ dem_disp %>%
 ```{r, echo = FALSE, results = 'asis', fig.height = 16}
 
 dem_disp %>%
-  filter(ar == 0) %>%
+  filter(ar == 0 & ets_spec != "w. ETS price") %>%
    dplyr::group_split(dep) %>%
       purrr::iwalk(.,~{
         ind <- unique(.x$dep)
@@ -445,7 +445,7 @@ dem_disp %>%
 ```{r, echo = FALSE, results = 'asis', fig.height = 16}
 
 dem_disp %>%
-  filter(ar == 0) %>%
+  filter(ar == 0 & ets_spec != "w. ETS price") %>%
   convert_mult %>%
       dplyr::group_split(id) %>%
       purrr::iwalk(.,~{

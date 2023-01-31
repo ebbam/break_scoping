@@ -261,13 +261,14 @@ plot_country <- function(cmod, country, na.rm = FALSE){
 #   filter(year_range == "1990:2021" & p_val == 0.01 & !is.na(ets_spec))
 
 ov_disp <- standard %>% separate(source, into = c("dep","formula"), sep = "[~]", remove = FALSE) %>%
-  mutate(dep = "(Log) Emissions",
+  mutate(dep = "Emissions",
          formula = trimws(formula)) %>%
   rbind(gen_source) %>%
   mutate(model = paste(mod_name, ets_spec)) %>%
   filter(p_val == 0.01)
 
 ov_disp %>%
+  filter(mod_name == "Standard Controls w. Temp" & ets_spec %in% c("w.o ETS", "w. ETS price")) %>% 
    dplyr::group_split(dep) %>%
       purrr::iwalk(.,~{
         ind <- unique(.x$dep)
@@ -371,13 +372,14 @@ ov_disp %>%
 ```{r, echo = FALSE, results='asis'}
 
 dem_disp <- standard %>% separate(source, into = c("dep","formula"), sep = "[~]", remove = FALSE) %>%
-  mutate(dep = "(Log) Emissions",
+  mutate(dep = "Emissions",
          formula = trimws(formula)) %>%
   rbind(prod) %>%
   mutate(model = paste(mod_name, ets_spec)) %>%
   filter(p_val == 0.01)
 
 dem_disp %>%
+  filter(mod_name == "Standard Controls w. Temp" & ets_spec %in% c("w.o ETS", "w. ETS price")) %>% 
    dplyr::group_split(dep) %>%
       purrr::iwalk(.,~{
         ind <- unique(.x$dep)

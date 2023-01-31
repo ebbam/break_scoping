@@ -55,8 +55,10 @@ shares <- readRDS(here("output/temp/shares_noar_nolux.RDS")) %>%
   rbind(readRDS(here("output/temp/shares_bysource_noar_nolux.RDS"))) %>% 
   rbind(readRDS(here("output/temp/shares_bysource_ar_nolux.RDS"))) %>% 
   rbind(readRDS(here("output/temp/mod_ets_price.RDS"))) %>%
-  filter(!grepl("oil", source) & !grepl("coal", source) & !grepl("gas", source)) %>% 
+  # Incomplete coal, oil, gas, data in previous models, supplemented below
+  filter(!grepl("oil", source) & !grepl("coal", source) & !grepl("gas", source), !grepl("nuclear", source)) %>% 
   rbind(filter(readRDS(here("output/temp/supp_share_elec_oil_coal_gas.RDS")), !grepl("fossil", source))) %>% 
+  rbind(readRDS(here("output/temp/shares_nuclear_no_zeros.RDS"))) %>% 
   filter(!grepl("l_edgar_v7", source)) %>% 
         mutate(ets_05 = ifelse(grepl("EU_ETS_05", source), 1, 0),
          ets_08 = ifelse(grepl("EU_ETS_08", source), 1, 0),
@@ -409,46 +411,46 @@ ov_disp %>%
 
 ```
 
-## Electricity by Source: Logit-transformed Shares (Selected) {.tabset}
+<!-- ## Electricity by Source: Logit-transformed Shares (Selected) {.tabset} -->
 
-```{r elec share logit, echo = FALSE, results='asis'}
+<!-- ```{r elec share logit, echo = FALSE, results='asis'} -->
 
-shares_disp %>% 
-  filter(dep %in% c("Fossil Share", "Low Carbon Share", "Renewables Share")) %>% 
-  rbind(logit_shares) %>% 
-  mutate(cat = case_when(grepl("Fossil", dep) ~ "Fossil",
-                         grepl("Low Carbon", dep) ~ "Low Carbon",
-                         grepl("Renewable", dep) ~ "Renewable"),
-         type = case_when(grepl("Logit", dep) ~ "Logit Share",
-                          !grepl("Logit", dep) ~ "Share")) %>% 
-  mutate(model = paste(mod_name, ets_spec)) %>%
-  filter(mod_name == "Standard Controls w. Temp" & ets_spec %in% c("w.o ETS", "w. ETS price")) %>% 
-   dplyr::group_split(cat) %>%
-      purrr::iwalk(.,~{
-        ind <- unique(.x$cat)
-        cat('### ', ind, '{.tabset}   \n')
-        for(n in unique(.x$type)){
-           cat('#### ', n, '{.tabset}   \n')
-          for(e in unique(.x$ets_spec)){
-            cat('##### ', e, '{.tabset}   \n')
-            for(a in unique(.x$ar)){
-              cat('###### AR = ', a, '   \n')
-              filter(.x, type == n & ets_spec == e & ar == a) %>% gen_p(.,auto = TRUE)
-              cat('\n')
-              cat('\n')
-              }
-            cat('\n')
-            cat('\n')
-            }
-          cat('\n')
-          cat('\n')
-          }
-        cat('\n')
-        cat('\n')
-        }
-        )
+<!-- shares_disp %>%  -->
+<!--   filter(dep %in% c("Fossil Share", "Low Carbon Share", "Renewables Share")) %>%  -->
+<!--   rbind(logit_shares) %>%  -->
+<!--   mutate(cat = case_when(grepl("Fossil", dep) ~ "Fossil", -->
+<!--                          grepl("Low Carbon", dep) ~ "Low Carbon", -->
+<!--                          grepl("Renewable", dep) ~ "Renewable"), -->
+<!--          type = case_when(grepl("Logit", dep) ~ "Logit Share", -->
+<!--                           !grepl("Logit", dep) ~ "Share")) %>%  -->
+<!--   mutate(model = paste(mod_name, ets_spec)) %>% -->
+<!--   filter(mod_name == "Standard Controls w. Temp" & ets_spec %in% c("w.o ETS", "w. ETS price")) %>%  -->
+<!--    dplyr::group_split(cat) %>% -->
+<!--       purrr::iwalk(.,~{ -->
+<!--         ind <- unique(.x$cat) -->
+<!--         cat('### ', ind, '{.tabset}   \n') -->
+<!--         for(n in unique(.x$type)){ -->
+<!--            cat('#### ', n, '{.tabset}   \n') -->
+<!--           for(e in unique(.x$ets_spec)){ -->
+<!--             cat('##### ', e, '{.tabset}   \n') -->
+<!--             for(a in unique(.x$ar)){ -->
+<!--               cat('###### AR = ', a, '   \n') -->
+<!--               filter(.x, type == n & ets_spec == e & ar == a) %>% gen_p(.,auto = TRUE) -->
+<!--               cat('\n') -->
+<!--               cat('\n') -->
+<!--               } -->
+<!--             cat('\n') -->
+<!--             cat('\n') -->
+<!--             } -->
+<!--           cat('\n') -->
+<!--           cat('\n') -->
+<!--           } -->
+<!--         cat('\n') -->
+<!--         cat('\n') -->
+<!--         } -->
+<!--         ) -->
 
-```
+<!-- ``` -->
 
 
 ## Electricity by Source: Levels {.tabset}
