@@ -335,7 +335,7 @@ ov_disp <- stand_disp %>%
 
 
 ov_disp %>%
-  filter(mod_name == "Standard Controls w. Temp" & ets_spec %in% c("w.o ETS", "w. ETS price") & !(dep %in% c("Low Carbon Share", "Renewables Share", "Fossil Share"))) %>% 
+  filter(mod_name == "Standard Controls w. Temp" & ets_spec %in% c("w.o ETS", "w. ETS") & !(dep %in% c("Low Carbon Share", "Renewables Share", "Fossil Share"))) %>% 
    dplyr::group_split(dep) %>%
       purrr::iwalk(.,~{
         ind <- unique(.x$dep)
@@ -372,7 +372,7 @@ ov_disp %>%
 ```{r, echo = FALSE, results = 'asis', fig.height = 16}
 
 ov_disp %>%
-   filter(ar == 0 & !(dep %in% c("Low Carbon Share", "Renewables Share", "Fossil Share"))) %>% 
+   filter(ar == 0 & !(dep %in% c("Low Carbon Share", "Renewables Share", "Fossil Share")) & !grepl("price", model)) %>%
    dplyr::group_split(dep) %>%
       purrr::iwalk(.,~{
         ind <- unique(.x$dep)
@@ -396,7 +396,7 @@ ov_disp %>%
 
 
 ov_disp %>%
-  filter(ar == 0 & !(dep %in% c("Low Carbon Share", "Renewables Share", "Fossil Share"))) %>%
+  filter(ar == 0 & !(dep %in% c("Low Carbon Share", "Renewables Share", "Fossil Share")) & !grepl("price", model)) %>%
   convert_mult %>%
       dplyr::group_split(id) %>%
       purrr::iwalk(.,~{
@@ -463,18 +463,16 @@ lev_disp <- gen_source %>%
   filter(p_val == 0.01)
 
 lev_disp %>%
-  filter(mod_name == "Standard Controls w. Temp" & ets_spec %in% c("w.o ETS", "w. ETS price")) %>% 
+  filter(mod_name == "Standard Controls w. Temp" & ets_spec %in% c("w.o ETS", "w. ETS")) %>%
    dplyr::group_split(dep) %>%
       purrr::iwalk(.,~{
         ind <- unique(.x$dep)
         cat('### ', ind, '{.tabset}   \n')
-        for(n in unique(.x$mod_name)){
-           cat('#### ', n, '{.tabset}   \n')
           for(e in unique(.x$ets_spec)){
-            cat('##### ', e, '{.tabset}   \n')
+            cat('#### ', e, '{.tabset}   \n')
             for(a in unique(.x$ar)){
-              cat('###### AR = ', a, '   \n')
-              filter(.x, mod_name == n & ets_spec == e & ar == a) %>% gen_p(.,auto = TRUE)
+              cat('##### AR = ', a, '   \n')
+              filter(.x, ets_spec == e & ar == a) %>% gen_p(.,auto = TRUE)
               cat('\n')
               cat('\n')
               }
@@ -483,9 +481,6 @@ lev_disp %>%
             }
           cat('\n')
           cat('\n')
-          }
-        cat('\n')
-        cat('\n')
         })
 
 ```
@@ -522,7 +517,7 @@ lev_disp %>%
 
 
 lev_disp %>%
-  filter(ar == 0) %>%
+  filter(ar == 0 & !grepl("price", model)) %>%
   convert_mult %>%
       dplyr::group_split(id) %>%
       purrr::iwalk(.,~{
