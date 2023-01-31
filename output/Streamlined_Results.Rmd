@@ -1,0 +1,490 @@
+---
+title: "Streamlined_Results"
+author: "Ebba Mark"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    dev: ragg_png
+
+---
+
+```{r set-options, echo=FALSE, cache=FALSE}
+options(width = 3000)
+```
+
+```{css, echo=FALSE}
+pre {
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, max.height = '300px', fig.width = 16, fig.height = 8) #fig.show="hold",,
+
+library(data.table)
+library(tidyverse)
+library(openxlsx)
+library(gets)
+library(getspanel)
+library(here)
+library(doParallel)
+library(grid)
+library(gridExtra)
+library(conflicted)
+library(viridis)
+
+conflict_prefer("filter", "dplyr")
+conflict_prefer("first", "dplyr")
+conflict_prefer("lag", "dplyr")
+
+source(here("code/dicts.R"))
+
+
+# Without Luxembourg
+# Standard models
+standard <- readRDS(here("output/temp/nolux_simpleets.RDS")) %>% 
+  #rbind(readRDS(here("output/temp/nolux_further_ets_20.RDS"))) %>% 
+  #rbind(readRDS(here("output/temp/temporary_ets.RDS"))) %>% 
+  rbind(readRDS(here("output/temp/mod_ets_price.RDS"))) %>%
+  filter(grepl("l_edgar_v7", source)) %>% 
+  mutate(ets_05 = ifelse(grepl("EU_ETS_05", source), 1, 0),
+         ets_08 = ifelse(grepl("EU_ETS_08", source), 1, 0),
+         ets_13 = ifelse(grepl("EU_ETS_13", source), 1, 0),
+         ets_yes = ets_05 + ets_08 + ets_13)
+
+# Production models
+prod <- readRDS(here("output/temp/production_data_models.RDS")) %>% 
+  rbind(readRDS(here("output/temp/imports_export_models.RDS"))) %>% 
+  mutate(ets_05 = ifelse(grepl("EU_ETS_05", source), 1, 0),
+         ets_08 = ifelse(grepl("EU_ETS_08", source), 1, 0),
+         ets_13 = ifelse(grepl("EU_ETS_13", source), 1, 0),
+         ets_yes = ets_05 + ets_08 + ets_13) %>% 
+  separate(source, into = c("dep","formula"), sep = "[~]", remove = FALSE) %>%
+  mutate(dep = str_to_title(gsub("log ", "", gsub("_"," ", gsub("_electricity", "", trimws(dep))))),
+         formula = trimws(formula),
+         mod_name = case_when(!grepl("cdd", source) ~ "Standard Controls",
+                              grepl("cdd", source) & grepl("lgdp", source) ~ "Standard Controls w. Temp",
+                              grepl("cdd", source) & !grepl("lgdp", source) ~ "Pop w. Temp"),
+         ets_spec = case_when(ets_yes == 0 ~ "w.o ETS",
+                              ets_yes == 3 & grepl("ets_price", source) ~ "w. ETS price",
+                              ets_yes == 3 & !grepl("ets_price", source) ~ "w. ETS")) %>% 
+                             filter(p_val %in% c(0.01) & year_range == "1990:2021")
+
+# Shares
+shares <- readRDS(here("output/temp/shares_noar_nolux.RDS")) %>% 
+  rbind(readRDS(here("output/temp/shares_bysource_noar_nolux.RDS"))) %>% 
+  rbind(readRDS(here("output/temp/shares_bysource_ar_nolux.RDS"))) %>% 
+  rbind(readRDS(here("output/temp/mod_ets_price.RDS"))) %>%
+  # Incomplete coal, oil, gas, data in previous models, supplemented below
+  filter(!grepl("oil", source) & !grepl("coal", source) & !grepl("gas", source), !grepl("nuclear", source)) %>% 
+  rbind(filter(readRDS(here("output/temp/supp_share_elec_oil_coal_gas.RDS")), !grepl("fossil", source))) %>% 
+  rbind(readRDS(here("output/temp/shares_nuclear_no_zeros.RDS"))) %>% 
+  filter(!grepl("l_edgar_v7", source)) %>% 
+        mutate(ets_05 = ifelse(grepl("EU_ETS_05", source), 1, 0),
+         ets_08 = ifelse(grepl("EU_ETS_08", source), 1, 0),
+         ets_13 = ifelse(grepl("EU_ETS_13", source), 1, 0),
+         ets_yes = ets_05 + ets_08 + ets_13)
+
+shares_disp <- shares %>% separate(source, into = c("dep","formula"), sep = "[~]", remove = FALSE) %>%
+  mutate(dep = str_to_title(gsub("_"," ", gsub("_elec", "", trimws(dep)))),
+         formula = trimws(formula),
+         mod_name = case_when(!grepl("cdd", source) ~ "Standard Controls",
+                              grepl("cdd", source) & grepl("lgdp", source) ~ "Standard Controls w. Temp",
+                              grepl("cdd", source) & !grepl("lgdp", source) ~ "Pop w. Temp"),
+         ets_spec = case_when(ets_yes == 0 ~ "w.o ETS",
+                              ets_yes == 3 & grepl("ets_price", source) ~ "w. ETS price",
+                              ets_yes == 3 & !grepl("ets_price", source) ~ "w. ETS")) %>% 
+                             filter(p_val %in% c(0.01) & year_range == "1990:2021") #& dep %in% c("Low Carbon Share", "Renewables Share", "Fossil Share"))
+
+# Logit-transformed shares
+logit_shares <- readRDS(here("output/temp/logit_transformed_shares_ff_ren_lc.RDS")) %>%
+        mutate(ets_05 = ifelse(grepl("EU_ETS_05", source), 1, 0),
+         ets_08 = ifelse(grepl("EU_ETS_08", source), 1, 0),
+         ets_13 = ifelse(grepl("EU_ETS_13", source), 1, 0),
+         ets_yes = ets_05 + ets_08 + ets_13) %>% 
+  separate(source, into = c("dep","formula"), sep = "[~]", remove = FALSE) %>%
+  mutate(dep = str_to_title(gsub("_"," ", gsub("_elec", "", trimws(dep)))),
+         formula = trimws(formula),
+         mod_name = case_when(!grepl("cdd", source) ~ "Standard Controls",
+                              grepl("cdd", source) & grepl("lgdp", source) ~ "Standard Controls w. Temp",
+                              grepl("cdd", source) & !grepl("lgdp", source) ~ "Pop w. Temp"),
+         ets_spec = case_when(ets_yes == 0 ~ "w.o ETS",
+                              ets_yes == 3 & grepl("ets_price", source) ~ "w. ETS price",
+                              ets_yes == 3 & !grepl("ets_price", source) ~ "w. ETS")) %>% 
+                             filter(p_val %in% c(0.01) & year_range == "1990:2021")
+
+gen_source <- readRDS(here("output/temp/gen_by_source_mods.RDS")) %>%
+        mutate(ets_05 = ifelse(grepl("EU_ETS_05", source), 1, 0),
+         ets_08 = ifelse(grepl("EU_ETS_08", source), 1, 0),
+         ets_13 = ifelse(grepl("EU_ETS_13", source), 1, 0),
+         ets_yes = ets_05 + ets_08 + ets_13) %>% 
+  separate(source, into = c("dep","formula"), sep = "[~]", remove = FALSE) %>%
+  mutate(dep = str_to_title(gsub("log ", "", gsub("_"," ", gsub("_electricity", "", trimws(dep))))),
+         formula = trimws(formula),
+         mod_name = case_when(!grepl("cdd", source) ~ "Standard Controls",
+                              grepl("cdd", source) & grepl("lgdp", source) ~ "Standard Controls w. Temp",
+                              grepl("cdd", source) & !grepl("lgdp", source) ~ "Pop w. Temp"),
+         ets_spec = case_when(ets_yes == 0 ~ "w.o ETS",
+                              ets_yes == 3 & grepl("ets_price", source) ~ "w. ETS price",
+                              ets_yes == 3 & !grepl("ets_price", source) ~ "w. ETS")) %>% 
+                             filter(p_val %in% c(0.01) & year_range == "1990:2021")
+
+```
+
+
+# Streamlined Overview:
+All models below were executed with impulse indicator saturation (IIS) enabled and a block size of 20. Results are displayed for our selected baseline model: with GDP, population, weather controls, all three ETS phase dummies (2005, 2008, 2013), a p-value threshold of 0.01, and spanning 1990-2021.\
+
+*Country sample:* EU-15 (excluding Luxembourg), United States, Canada, New Zealand, Australia, Japan, Switzerland\
+For certain specifications (coal, nuclear, exports, imports) countries with significant level of zero values have been removed.\
+
+"Channels" refer to our indicated "demand/generation" and "technology" channels which distinguish between changes in electricity consumption/behavior (demand, generation, exports/imports) and electricity sources. For clarity, detected breaks are represented by black lines in the comparison plots.\
+
+```{r, echo = FALSE, include = FALSE}
+# Plotting functions
+
+f <- function(k) {
+        step <- k
+        function(y) seq(floor(min(y)), ceiling(max(y)), by = step)
+}
+
+# Arranges result plots (plot and plot_grid) and prints model results
+# Option to suppress model results using results = FALSE is required for automatic tabsetting.
+gen_p <- function(df, results = TRUE, auto = FALSE){
+  if(nrow(df) == 0){return("Empty data frame. Model likely not run.")}else{
+    for(i in 1:nrow(df)){
+      mt <- paste0(df$country_sample[i], " (", df$year_range[i],")", "; p.value: ",df$p_val[i],  "; AR: ",df$ar[i])
+      st <- paste0("Formula: ", df$source[i])
+      
+    res <- df %>% slice(i) %>% pull(is) %>% first
+  
+    pl <- res %>% 
+      plot(zero_line = FALSE) +
+        ggtitle(label = mt, subtitle = st) +
+      scale_x_continuous(breaks = f(10))
+    
+    pg <- res %>%
+      plot_grid() +
+      ggtitle(label = mt, subtitle = st)
+    grid.arrange(pl, pg, ncol = 2)
+
+    if(results == TRUE & auto == FALSE){
+        print(st)
+        print(mt)
+        print(res)
+    }else if(results == TRUE & auto == TRUE){
+        p <- invisible(capture.output(res$isatpanel.result))
+        # Spacing included to trick knitr into reading as verbatim code.
+        cat(c("                         \n", 
+              "                         \n", 
+              paste("                  ", st,'     \n'),
+              paste("                  ", mt,'     \n'),
+              paste("                  ", p,'     \n')))
+      }
+    }
+  }
+}
+
+# Data manipulation function: extracts plot_grid input data from getspanel
+# mod = df of models as created above. Minimum requirement is 2 columns (is =  isatpanel object, model = model name)
+# na.rm removes countries for which NO model reveals a break/effect
+convert <- function(mod){
+  if(nrow(mod) == 0){
+    print("No models to plot.")
+  }else{
+    c_mods <- tibble()
+    for(m in 1:nrow(mod)){
+      mod_name <- mod %>% slice(m) %>% pull(model)
+      # Currently, this extracts the data used to build the plot_grid in isatpanel; not ideal
+      grid_dat <- mod %>% slice(m) %>% pull(is) %>% first %>% plot_grid %>% ggplot_build
+      grid_dat <- grid_dat$plot$data
+      grid_dat$model <- mod_name
+      c_mods <- rbind(c_mods, grid_dat)
+    }
+  }
+  return(c_mods)
+}
+
+plot_comp <- function(mod, panel = "country", na.rm = TRUE, sign = NULL){
+  tmp <- convert(mod)
+
+  if(panel == "model"){
+    tmp <- tmp %>% rename(id = model, model = id)
+  }else if(!(panel == "country")){
+    print("Error")
+    break}else{}
+
+  if(na.rm == TRUE){
+    tmp <- tmp %>% group_by(id) %>% filter(!all(is.na(effect)))
+  }
+  if(sign == "pos"){
+    tmp <- tmp %>% group_by(id) %>% filter(any(effect > 0))
+    
+  }else if(sign == "neg") { tmp <- tmp %>% group_by(id) %>% filter(any(effect < 0))}
+
+  p <- tmp %>% ggplot(aes(x = time, y = model)) +
+      geom_tile(aes(fill = effect), na.rm = NA) +
+      scale_fill_gradient2(na.value = NA, name = "Effect")+
+      scale_x_continuous(expand = c(0,0)) +
+      scale_y_discrete(expand = c(0,0), limits = rev) +
+      facet_grid(id~.) +
+      theme_bw() +
+      theme(panel.grid = element_blank(),
+            panel.border = element_rect(fill = NA),
+            strip.background = element_blank(),
+            axis.text = element_text(size = 12, color = "black"),
+            strip.text.y = element_text(size = 14, angle = 0)) +
+      labs(x = NULL, y = NULL,title= "Model Overview")
+  
+  print(p)
+}
+
+# Similar function as convert but organises w/ respect to multiple outcome variables
+convert_mult <- function(mod){
+  if(nrow(mod) == 0){
+    print("No models to plot.")
+  }else{
+    c_mods <- tibble()
+    for(m in 1:nrow(mod)){
+      mod_name <- mod %>% slice(m) %>% pull(model)
+      dep_name <- mod %>% slice(m) %>% pull(dep)
+      # Currently, this extracts the data used to build the plot_grid in isatpanel
+      grid_dat <- mod %>% slice(m) %>% pull(is) %>% first %>% plot_grid %>% ggplot_build
+      grid_dat <- grid_dat$plot$data
+      grid_dat$model <- mod_name
+      grid_dat$dep <- dep_name
+      c_mods <- rbind(c_mods, grid_dat)
+    }
+  }
+  return(c_mods)
+}
+
+# Pass converted data frame (convert_mult)
+
+plot_country <- function(cmod, country, bs = list(), na.rm = FALSE){
+  cmod <- cmod %>% filter(id == country)
+
+  if(na.rm == TRUE){
+    cmod <- cmod %>% group_by(dep) %>% filter(!all(is.na(effect)))
+  }
+  if(nrow(cmod)== 0){return()}
+  # Replace NAs with 0 value so that cases in which only one model reveals an effect are displayed correctly (limitation of facet_grid)
+  cmod %>% mutate(effect = ifelse(is.na(effect), 0, effect)) %>%
+    group_by(dep) %>%
+    do(gg = {ggplot(., aes(x = time, y = model)) +
+        geom_tile(aes(fill = effect)) +
+        scale_fill_gradient2(na.value = NA, name = "Effect", oob = scales::squish) +
+        scale_x_continuous(expand = c(0,0)) +
+        scale_y_discrete(expand = c(0,0), limits = rev) +
+        geom_vline(xintercept = bs) +
+        facet_grid(dep~.) +
+        theme_bw() +
+        theme(panel.grid = element_blank(),
+              legend.position = "bottom",
+               strip.background = element_blank(),
+               axis.text = element_blank(), #element_text(size = 12, color = "black"),
+               strip.text.y = element_text(size = 12)) +
+        labs(x = NULL, y = NULL)
+      }) %>%
+    .$gg %>% arrangeGrob(grobs = ., ncol = 1) %>% grid.arrange()
+}
+
+get_breaks <- function(mods, sign = "all"){
+  breaks <- c()
+  for(s in 1:nrow(mods)){
+  breaks <- mods %>% slice(s) %>% pull(is) %>% first %>% break_uncertainty(.) %>% rbind(breaks, .)}
+  if(sign == "neg"){
+    neg_b <- breaks %>% filter(coef < 0) %>% pull(id) %>% unique
+    return(neg_b)
+  }else if(sign == "pos"){
+    pos_b <- breaks %>% filter(coef > 0) %>% pull(id) %>% unique
+    return(pos_b)
+  }else if(sign == "all"){
+    all_b <- breaks %>% pull(id) %>% unique
+    return(all_b)}
+}
+
+```
+
+## Emissions: All detected breaks {.tabset}
+
+```{r auto tabs, echo = FALSE, results = 'asis'}
+
+stand_disp <- standard %>%
+  mutate(mod_name = case_when(!grepl("cdd", source) ~ "Standard Controls",
+                              grepl("cdd", source) & grepl("lgdp", source) ~ "Standard Controls w. Temp",
+                              grepl("cdd", source) & !grepl("lgdp", source) ~ "Pop w. Temp"),
+         ets_spec = case_when(ets_yes == 0 ~ "w.o ETS",
+                              ets_yes == 3 & grepl("ets_price", source) ~ "w. ETS price",
+                              ets_yes == 3 & !grepl("ets_price", source) ~ "w. ETS")) %>%
+  filter(year_range == "1990:2021" & !is.na(ets_spec))
+
+stand_disp %>%
+  filter(mod_name == "Standard Controls w. Temp" & ets_spec %in% c("w. ETS") & ar == 0 & p_val < 0.05) %>% 
+  mutate(model = paste("p=",p_val)) %>% plot_comp(., sign = "all")
+```
+
+
+## Negative Emissions Breaks  {.tabset}
+*Note:* Countries in which no break was detected are excluded from these overview plots.\
+
+### Emissions {.tabset}
+
+```{r, echo = FALSE, fig.height = 14}
+
+stand_forms <- stand_disp %>%
+  filter(mod_name == "Standard Controls w. Temp" & ets_spec== "w. ETS" & ar == 0 & p_val < 0.05) %>% 
+  mutate(model = paste("p=",p_val))
+
+stand_forms %>% plot_comp(., sign = "neg")
+
+```
+
+### Channels {.tabset}
+```{r, echo = FALSE, include = FALSE}
+
+dem_disp <- prod %>%
+  mutate(model = paste(mod_name, ets_spec)) %>% 
+  filter(p_val == 0.01 & model == "Standard Controls w. Temp w. ETS" & ar == 0) 
+
+lev_disp <- gen_source %>%
+  mutate(model = paste(mod_name, ets_spec)) %>%
+  filter(p_val == 0.01 & ar == 0 & model == "Standard Controls w. Temp w. ETS") 
+
+ov_disp <- standard %>%
+  mutate(mod_name = case_when(grepl("cdd", source) & grepl("lgdp", source) ~ "Standard Controls w. Temp",
+         grepl("cdd", source) & !grepl("lgdp", source) ~ "Pop w. Temp",
+         !grepl("cdd", source) ~ "Standard Controls"),
+         ets_spec = case_when(ets_yes == 0 ~ "w.o ETS",
+                              ets_yes == 3 & grepl("ets_price", source) ~ "w. ETS price",
+                              ets_yes == 3 & !grepl("ets_price", source) ~ "w. ETS")) %>%
+  filter(year_range == "1990:2021" & p_val == 0.01 & !is.na(ets_spec)) %>% 
+  separate(source, into = c("dep","formula"), sep = "[~]", remove = FALSE) %>%
+  mutate(dep = "Emissions",
+         formula = trimws(formula)) %>%
+  rbind(shares_disp) %>%
+  mutate(model = paste(mod_name, ets_spec)) %>%
+  filter(p_val == 0.01) %>% 
+  filter(ar == 0 & !(dep %in% c("Low Carbon Share", "Renewables Share", "Fossil Share", "Emissions")) & model == "Standard Controls w. Temp w. ETS")
+
+nb <- stand_disp %>%
+  filter(mod_name == "Standard Controls w. Temp" & ets_spec== "w. ETS" & ar == 0 & p_val == 0.01) %>% 
+  pull(is) %>% first %>% break_uncertainty(.) %>% filter(coef < 0) %>% select(id, time)
+
+pb <- stand_disp %>%
+  filter(mod_name == "Standard Controls w. Temp" & ets_spec== "w. ETS" & ar == 0 & p_val == 0.01) %>% 
+  pull(is) %>% first %>% break_uncertainty(.) %>% filter(coef > 0) %>% select(id, time)
+
+plots <- list()
+for(count in c("Belgium", "Canada", "Denmark", "Portugal", "UnitedKingdom", "UnitedStates")){
+  b <- nb$time[nb$id == count] #%>% as.list
+  
+  demand_chan <- dem_disp %>%
+    arrange(dep) %>% 
+    convert_mult %>%
+    filter(id == count) %>% 
+    plot_country(., country = count, bs = b, na.rm = TRUE)
+
+   source_lev_chan <- lev_disp %>%
+     arrange(dep) %>% 
+    convert_mult %>%
+    filter(id == count) %>%
+    plot_country(., country = count, bs = b, na.rm = TRUE)
+
+  source_share_chan <- ov_disp %>%
+    arrange(dep) %>% 
+    convert_mult %>%
+    filter(id == count) %>%
+    plot_country(., country = count, bs = b, na.rm = TRUE)
+  
+  ptemp <- list(grid.arrange(arrangeGrob(demand_chan, top = "Demand Channel"), arrangeGrob(source_lev_chan, top = "Tech Channel: Levels"), arrangeGrob(source_share_chan, top = "Tech Channel: Shares"), ncol = 3, top = count))
+  names(ptemp) <- count
+  
+  plots <- c(plots, ptemp)
+}
+
+```
+
+
+```{r, echo = FALSE, results = 'asis', fig.height = 16}
+
+for(cty in c("Belgium", "Canada", "Denmark", "Portugal", "UnitedKingdom", "UnitedStates")){
+  cat('#### ', cty, '   \n')
+  cat('\n')
+  cat('\n')
+  plot.new()
+  plots[[cty]] %>% grid.draw
+  plot.new()
+        cat('\n')
+        cat('\n')
+}
+
+```
+
+
+## Positive Emissions Breaks  {.tabset}
+*Note:* Countries in which no break was detected are excluded from these overview plots.\
+
+### Emissions {.tabset}
+
+```{r, echo = FALSE, fig.height = 12}
+
+stand_forms <- stand_disp %>%
+  filter(mod_name == "Standard Controls w. Temp" & ets_spec== "w. ETS" & ar == 0 & p_val < 0.05) %>% 
+  mutate(model = paste("p=",p_val))
+
+stand_forms %>% plot_comp(., sign = "pos")
+
+```
+
+### Channels {.tabset}
+```{r, echo = FALSE, include = FALSE}
+
+plots_p <- list()
+for(count in c("Australia", "Austria", "France", "Germany", "Japan", "Netherlands", "NewZealand", "Portugal", "Spain", "Sweden", "Switzerland")){
+  print(count)
+  b <- pb$time[pb$id == count] #%>% as.list
+
+  demand_chan <- dem_disp %>% 
+    arrange(dep) %>%
+    convert_mult %>%
+    filter(id == count) %>%
+    plot_country(., country = count, bs = b, na.rm = TRUE)
+
+   source_lev_chan <- lev_disp %>%
+     arrange(dep) %>%
+    convert_mult %>%
+    filter(id == count) %>%
+    plot_country(., country = count, bs = b, na.rm = TRUE)
+
+  source_share_chan <- ov_disp %>%
+    arrange(dep) %>%
+    convert_mult %>%
+    filter(id == count) %>%
+    plot_country(., country = count, bs = b, na.rm = TRUE)
+
+  ptemp <- list(grid.arrange(arrangeGrob(demand_chan, top = "Demand Channel"), arrangeGrob(source_lev_chan, top = "Tech Channel: Levels"), arrangeGrob(source_share_chan, top = "Tech Channel: Shares"), ncol = 3, top = count))
+  names(ptemp) <- count
+
+  plots_p <- c(plots_p, ptemp)
+}
+
+```
+
+
+```{r, echo = FALSE, results = 'asis', fig.height = 16}
+
+for(cty in c("Australia", "Austria", "France", "Germany", "Japan", "Netherlands", "NewZealand", "Portugal", "Spain", "Sweden", "Switzerland")){
+  cat('#### ', cty, '   \n')
+  cat('\n')
+  cat('\n')
+  plot.new()
+  plots_p[[cty]] %>% grid.draw
+  plot.new()
+        cat('\n')
+        cat('\n')
+}
+
+```
