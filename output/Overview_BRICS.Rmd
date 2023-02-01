@@ -1,0 +1,403 @@
+---
+title: "Overview_BRICS"
+author: "Ebba Mark"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    dev: ragg_png
+---
+
+```{r set-options, echo=FALSE, cache=FALSE}
+options(width = 3000)
+```
+
+```{css, echo=FALSE}
+pre {
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, max.height = '300px', fig.width = 16, fig.height = 8) #fig.show="hold",,
+
+library(data.table)
+library(tidyverse)
+library(openxlsx)
+library(gets)
+library(getspanel)
+library(here)
+library(doParallel)
+library(grid)
+library(gridExtra)
+library(conflicted)
+library(viridis)
+
+conflict_prefer("filter", "dplyr")
+conflict_prefer("first", "dplyr")
+conflict_prefer("lag", "dplyr")
+
+source(here("code/dicts.R"))
+
+brics_ems <- readRDS(here(here("output/brics_emissions_models.RDS"))) %>% 
+  separate(source, into = c("dep","formula"), sep = "[~]", remove = FALSE) %>%
+  mutate(mod_name = case_when(!grepl("CDD", source) ~ "Standard Controls",
+                              grepl("CDD", source) & grepl("lgdp", source) ~ "Standard Controls w. Temp",
+                              grepl("CDD", source) & !grepl("lgdp", source) ~ "Pop w. Temp"))
+
+
+brics_shares <- readRDS(here("output/brics_source_shares_models.RDS")) %>% 
+  separate(source, into = c("dep","formula"), sep = "[~]", remove = FALSE) %>% 
+  mutate(dep = str_to_title(gsub("_"," ", gsub("_elec", "", trimws(dep)))),
+         formula = trimws(formula),
+         mod_name = case_when(!grepl("cdd", source) ~ "Standard Controls",
+                              grepl("cdd", source) & grepl("lgdp", source) ~ "Standard Controls w. Temp",
+                              grepl("cdd", source) & !grepl("lgdp", source) ~ "Pop w. Temp"))
+
+brics_dem <- readRDS(here("output/brics_dem_models.RDS")) %>% 
+  separate(source, into = c("dep","formula"), sep = "[~]", remove = FALSE) %>% 
+  mutate(dep = str_to_title(gsub("_"," ", gsub("elec_", "", trimws(dep)))),
+         formula = trimws(formula),
+         mod_name = case_when(!grepl("cdd", source) ~ "Standard Controls",
+                              grepl("cdd", source) & grepl("lgdp", source) ~ "Standard Controls w. Temp",
+                              grepl("cdd", source) & !grepl("lgdp", source) ~ "Pop w. Temp"))
+
+```
+
+
+# Streamlined Overview:
+All models below were executed with impulse indicator saturation (IIS) enabled and a block size of 20. Results are displayed for our selected baseline model: with GDP, population, weather controls, all three ETS phase dummies (2005, 2008, 2013), a p-value threshold of 0.01, and spanning 1990-2021.\
+
+*Country sample:* BRICS +: Brazil, Russia, India, China, South Africa, Indonesia, Argentina, Nigeria, Saudi Arabia, Turkey, Egypt, Iran, Vietnam, Thailand, United Arab Emirates\
+For certain specifications countries with significant level of zero values have been removed.\
+
+"Channels" refer to our indicated "demand/generation" and "technology" channels which distinguish between changes in electricity consumption/behavior (demand, generation, exports/imports) and electricity sources. For clarity, detected breaks are represented by black lines in the comparison plots.\
+
+```{r, echo = FALSE, include = FALSE}
+# Plotting functions
+
+f <- function(k) {
+        step <- k
+        function(y) seq(floor(min(y)), ceiling(max(y)), by = step)
+}
+
+# Arranges result plots (plot and plot_grid) and prints model results
+# Option to suppress model results using results = FALSE is required for automatic tabsetting.
+gen_p <- function(df, results = TRUE, auto = FALSE){
+  if(nrow(df) == 0){return("Empty data frame. Model likely not run.")}else{
+    for(i in 1:nrow(df)){
+      mt <- paste0(df$country_sample[i], " (", df$year_range[i],")", "; p.value: ",df$p_val[i],  "; AR: ",df$ar[i])
+      st <- paste0("Formula: ", df$source[i])
+      
+    res <- df %>% slice(i) %>% pull(is) %>% first
+  
+    pl <- res %>% 
+      plot(zero_line = FALSE) +
+        ggtitle(label = mt, subtitle = st) +
+      scale_x_continuous(breaks = f(10))
+    
+    pg <- res %>%
+      plot_grid() +
+      ggtitle(label = mt, subtitle = st)
+    grid.arrange(pl, pg, ncol = 2)
+
+    if(results == TRUE & auto == FALSE){
+        print(st)
+        print(mt)
+        print(res)
+    }else if(results == TRUE & auto == TRUE){
+        p <- invisible(capture.output(res$isatpanel.result))
+        # Spacing included to trick knitr into reading as verbatim code.
+        cat(c("                         \n", 
+              "                         \n", 
+              paste("                  ", st,'     \n'),
+              paste("                  ", mt,'     \n'),
+              paste("                  ", p,'     \n')))
+      }
+    }
+  }
+}
+
+# Data manipulation function: extracts plot_grid input data from getspanel
+# mod = df of models as created above. Minimum requirement is 2 columns (is =  isatpanel object, model = model name)
+# na.rm removes countries for which NO model reveals a break/effect
+convert <- function(mod){
+  if(nrow(mod) == 0){
+    print("No models to plot.")
+  }else{
+    c_mods <- tibble()
+    for(m in 1:nrow(mod)){
+      mod_name <- mod %>% slice(m) %>% pull(model)
+      # Currently, this extracts the data used to build the plot_grid in isatpanel; not ideal
+      grid_dat <- mod %>% slice(m) %>% pull(is) %>% first %>% plot_grid %>% ggplot_build
+      grid_dat <- grid_dat$plot$data
+      grid_dat$model <- mod_name
+      c_mods <- rbind(c_mods, grid_dat)
+    }
+  }
+  return(c_mods)
+}
+
+plot_comp <- function(mod, panel = "country", na.rm = TRUE, sign = NULL){
+  tmp <- convert(mod)
+
+  if(panel == "model"){
+    tmp <- tmp %>% rename(id = model, model = id)
+  }else if(!(panel == "country")){
+    print("Error")
+    break}else{}
+
+  if(na.rm == TRUE){
+    tmp <- tmp %>% group_by(id) %>% filter(!all(is.na(effect)))
+  }
+  if(sign == "pos"){
+    tmp <- tmp %>% group_by(id) %>% filter(any(effect > 0))
+    
+  }else if(sign == "neg") { tmp <- tmp %>% group_by(id) %>% filter(any(effect < 0))}
+
+  p <- tmp %>% ggplot(aes(x = time, y = model)) +
+      geom_tile(aes(fill = effect), na.rm = NA) +
+      scale_fill_gradient2(na.value = NA, name = "Effect")+
+      scale_x_continuous(expand = c(0,0)) +
+      scale_y_discrete(expand = c(0,0), limits = rev) +
+      facet_grid(id~.) +
+      theme_bw() +
+      theme(panel.grid = element_blank(),
+            panel.border = element_rect(fill = NA),
+            strip.background = element_blank(),
+            axis.text = element_text(size = 12, color = "black"),
+            strip.text.y = element_text(size = 14, angle = 0)) +
+      labs(x = NULL, y = NULL,title= "Model Overview")
+  
+  print(p)
+}
+
+# Similar function as convert but organises w/ respect to multiple outcome variables
+convert_mult <- function(mod){
+  if(nrow(mod) == 0){
+    print("No models to plot.")
+  }else{
+    c_mods <- tibble()
+    for(m in 1:nrow(mod)){
+      mod_name <- mod %>% slice(m) %>% pull(model)
+      dep_name <- mod %>% slice(m) %>% pull(dep)
+      # Currently, this extracts the data used to build the plot_grid in isatpanel
+      grid_dat <- mod %>% slice(m) %>% pull(is) %>% first %>% plot_grid %>% ggplot_build
+      grid_dat <- grid_dat$plot$data
+      grid_dat$model <- mod_name
+      grid_dat$dep <- dep_name
+      c_mods <- rbind(c_mods, grid_dat)
+    }
+  }
+  return(c_mods)
+}
+
+# Pass converted data frame (convert_mult)
+
+plot_country <- function(cmod, country, bs = list(), na.rm = FALSE){
+  cmod <- cmod %>% filter(id == country)
+
+  if(na.rm == TRUE){
+    cmod <- cmod %>% group_by(dep) %>% filter(!all(is.na(effect)))
+  }
+  if(nrow(cmod)== 0){return()}
+  # Replace NAs with 0 value so that cases in which only one model reveals an effect are displayed correctly (limitation of facet_grid)
+  cmod %>% mutate(effect = ifelse(is.na(effect), 0, effect)) %>%
+    group_by(dep) %>%
+    do(gg = {ggplot(., aes(x = time, y = model)) +
+        geom_tile(aes(fill = effect)) +
+        scale_fill_gradient2(na.value = NA, name = "Effect", oob = scales::squish) +
+        scale_x_continuous(expand = c(0,0)) +
+        scale_y_discrete(expand = c(0,0), limits = rev) +
+        geom_vline(xintercept = bs) +
+        facet_grid(dep~.) +
+        theme_bw() +
+        theme(panel.grid = element_blank(),
+              legend.position = "bottom",
+               strip.background = element_blank(),
+               axis.text = element_blank(), #element_text(size = 12, color = "black"),
+               strip.text.y = element_text(size = 12)) +
+        labs(x = NULL, y = NULL)
+      }) %>%
+    .$gg %>% arrangeGrob(grobs = ., ncol = 1) %>% grid.arrange()
+}
+
+get_breaks <- function(mods, sign = "all"){
+  breaks <- c()
+  for(s in 1:nrow(mods)){
+  breaks <- mods %>% slice(s) %>% pull(is) %>% first %>% break_uncertainty(.) %>% rbind(breaks, .)}
+  if(sign == "neg"){
+    neg_b <- breaks %>% filter(coef < 0) %>% pull(id) %>% unique
+    return(neg_b)
+  }else if(sign == "pos"){
+    pos_b <- breaks %>% filter(coef > 0) %>% pull(id) %>% unique
+    return(pos_b)
+  }else if(sign == "all"){
+    all_b <- breaks %>% pull(id) %>% unique
+    return(all_b)}
+}
+
+```
+
+## Emissions: All detected breaks {.tabset}
+
+### Model Overview
+```{r, echo = FALSE}
+
+brics_ems %>% filter(year_range == "1990:2021") %>% 
+  mutate(model = paste("p=",p_val)) %>% plot_comp(., sign = "all")
+
+```
+
+### Model Results
+```{r, echo = FALSE}
+
+brics_ems %>% filter(year_range == "1990:2021") %>% 
+  mutate(model = paste("p=",p_val)) %>% gen_p(.)
+
+```
+
+## Emissions {.tabset}
+
+### Negative Breaks {.tabset}
+```{r, echo = FALSE}
+
+brics_ems %>% filter(year_range == "1990:2021") %>%
+  mutate(model = paste("p=",p_val)) %>% plot_comp(., sign = "neg")
+
+```
+
+
+```{r, echo = FALSE, include = FALSE}
+
+nb <- brics_ems %>%
+  filter(year_range == "1990:2021" & p_val == 0.01) %>%
+  pull(is) %>% first %>% break_uncertainty(.) %>% filter(coef < 0) %>% select(id, time)
+
+
+test <- brics_dem %>% mutate(model = paste(dep, p_val, year_range))
+for(x in 1:nrow(test)){
+  test %>% slice(5) %>% pull(is) %>% first %>% plot_grid
+}
+
+plots <- list()
+for(count in c("Egypt", "Russia", "SouthAfrica", "Thailand")){
+  print(count)
+  b <- nb$time[nb$id == count] #%>% as.list
+
+  demand_chan <- brics_dem %>%
+    filter(p_val == 0.01) %>%
+    mutate(model = paste("p=",p_val)) %>%
+    arrange(dep) %>%
+    convert_mult %>%
+    filter(id == count) %>%
+    plot_country(., country = count, bs = b, na.rm = TRUE)
+  #
+  #  source_lev_chan <- lev_disp %>%
+  #    arrange(dep) %>%
+  #   convert_mult %>%
+  #   filter(id == count) %>%
+  #   plot_country(., country = count, bs = b, na.rm = TRUE)
+
+  source_share_chan <- brics_shares %>%
+    filter(p_val == 0.01) %>%
+    mutate(model = paste("p=",p_val)) %>%
+    arrange(dep) %>%
+    convert_mult %>%
+    filter(id == count) %>%
+    plot_country(., country = count, bs = b, na.rm = TRUE)
+
+  ptemp <- list(grid.arrange(arrangeGrob(demand_chan, top = "Demand Channel"), arrangeGrob(source_share_chan, top = "Tech Channel: Shares"), #arrangeGrob(source_lev_chan, top = "Tech Channel: Levels"),
+                             ncol = 2, top = count))
+  names(ptemp) <- count
+
+  plots <- c(plots, ptemp)
+}
+
+```
+
+
+```{r, echo = FALSE, results = 'asis', fig.height = 16}
+
+for(cty in c("Egypt", "Russia", "SouthAfrica", "Thailand")){
+  cat('#### ', cty, '   \n')
+  cat('\n')
+  cat('\n')
+  plot.new()
+  plots[[cty]] %>% grid.draw
+  plot.new()
+        cat('\n')
+        cat('\n')
+}
+
+```
+
+
+### Positive Breaks  {.tabset}
+
+```{r, echo = FALSE}
+
+brics_ems %>% filter(year_range == "1990:2021") %>%
+  mutate(model = paste("p=",p_val)) %>% plot_comp(., sign = "pos")
+
+```
+
+```{r, echo = FALSE, include = FALSE}
+
+pb <- brics_ems %>%
+  filter(year_range == "1990:2021" & p_val == 0.01) %>%
+  pull(is) %>% first %>% break_uncertainty(.) %>% filter(coef > 0) %>% select(id, time)
+
+plots <- list()
+for(count in c("Brazil", "Indonesia", "Iran", "Saudi Arabia", "Vietnam")){
+  print(count)
+  b <- pb$time[pb$id == count] #%>% as.list
+
+  demand_chan <- brics_dem %>%
+    filter(p_val == 0.01) %>%
+    mutate(model = paste("p=",p_val)) %>%
+    arrange(dep) %>%
+    convert_mult %>%
+    filter(id == count) %>%
+    plot_country(., country = count, bs = b, na.rm = TRUE)
+  #
+  #  source_lev_chan <- lev_disp %>%
+  #    arrange(dep) %>%
+  #   convert_mult %>%
+  #   filter(id == count) %>%
+  #   plot_country(., country = count, bs = b, na.rm = TRUE)
+
+  source_share_chan <- brics_shares %>%
+    filter(p_val == 0.01) %>%
+    mutate(model = paste("p=",p_val)) %>%
+    arrange(dep) %>%
+    convert_mult %>%
+    filter(id == count) %>%
+    plot_country(., country = count, bs = b, na.rm = TRUE)
+
+  ptemp <- list(grid.arrange(arrangeGrob(demand_chan, top = "Demand Channel"), arrangeGrob(source_share_chan, top = "Tech Channel: Shares"), #arrangeGrob(source_lev_chan, top = "Tech Channel: Levels"),
+                             ncol = 2, top = count))
+  names(ptemp) <- count
+
+  plots <- c(plots, ptemp)
+}
+
+```
+
+
+```{r, echo = FALSE, results = 'asis', fig.height = 16}
+# Saudi Arabia removed bc no effect in channels - if modifications are made make sure to include again!
+for(cty in c("Brazil", "Indonesia", "Iran", "Vietnam")){
+  cat('#### ', cty, '   \n')
+  cat('\n')
+  cat('\n')
+  plot.new()
+  plots[[cty]] %>% grid.draw
+  plot.new()
+        cat('\n')
+        cat('\n')
+}
+
+```
+

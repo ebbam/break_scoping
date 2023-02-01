@@ -1,0 +1,292 @@
+---
+title: "Analysis_BRICS"
+author: "Ebba Mark"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+# Load libraries
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+rm(list = ls())
+library(data.table)
+library(tidyverse)
+library(openxlsx)
+library(stringr)
+library(gets)
+library(getspanel)
+library(here)
+library(doParallel)
+library(fastDummies)
+library(janitor)
+library(plm)
+
+source(here("code/dicts.R"))
+
+data <- readRDS(here("data/out/elec_emissions_panel_clean_22.RDS"))
+
+```
+
+# Create controls, scale emissions (ktco2/ktco2e), other required transformations (FD, lags, growth rates)
+
+Three available GDP indicators: 
+- WB GDP current US$ (gdp)   
+- OECD 2015 constant prices US$ (gdp_const_oecd)   
+- WB 2015 constant price $US (gdp_const) 
+
+NOTE: Canada is missing WB 2015 constant price US$ data points from 1990-1996, 
+Canada's WB TS has been replaced with the OECD data
+```{r}
+
+dfi <- data %>% 
+  mutate(gdp_sq = gdp^2,
+         gdp_wb_sq = gdp_const^2,
+         gdp_oecd_sq = gdp_const_oecd^2,
+         lpop = log(pop),
+         lgdp = log(gdp),
+         lgdp_wb = log(gdp_const),
+         lgdp_oecd = log(gdp_const_oecd),
+         lgdp_sq = log(gdp)^2,
+         lgdp_wb_sq = log(gdp_const)^2,
+         lgdp_oecd_sq = log(gdp_const_oecd)^2, 
+         edgar_v7_elec_ktco2 = edgar_v7_elec_mtco2*1000,
+         l_edgar_v7 = log(edgar_v7_elec_ktco2),
+         owid_1_elec_heat_ktco2e = owid_1_elec_heat_tco2e/1000,
+         owid_2_elec_ktco2e = owid_2_elec_mtco2e*1000,
+         bp_energy_ktco2 = bp_energy_mtco2*1000,
+         log_electricity_generation = log(electricity_generation))
+
+df <- dfi %>% group_by(country) %>%
+  # Lags (3), first-difference (growth rate = fd in log) (EDGAR V7), lgdp (WB current, WB constant 2015, OECD constant 2015), lpop, lgdp_sq (WB current, WB constant 2015, OECD constant 2015)
+  mutate(across(c(l_edgar_v7, lgdp, lgdp_wb, lgdp_oecd, lpop, lgdp_sq, lgdp_wb_sq, lgdp_oecd_sq), list(l1 = ~lag(.x, n = 1L),
+         l2 = ~lag(.x, n = 2L),
+         l3 = ~lag(.x, n = 3L), 
+         d = ~c(NA, diff(.x, differences = 1))),
+          #g = ~(c(NA, diff(.x, differences = 1))/lag(.x, n = 1L))*100),
+         .names = "{.fn}.{.col}")) %>% 
+  mutate(EU_ETS_05 = ifelse(country %in% EU15 & year >= 2005, 1, 0),
+         EU_ETS_08 = ifelse(country %in% EU15 & year >= 2008, 1, 0),
+         EU_ETS_13 = ifelse(country %in% EU15 & year >= 2013, 1, 0))
+         
+```
+
+# Testing BRICS+
+```{r}
+
+brics_plus <- c("Brazil", "Russia", "India", "China", "South Africa", "Indonesia", "Argentina", "Nigeria", "Saudi Arabia", "Turkey", "Egypt", "Iran", "Vietnam", "Thailand", "United Arab Emirates")
+
+# Complete except weather for 1990-2021 (except Iran, UAE in 2021)
+# Complete for weather 2000-2021
+stan_vars <- c("l_edgar_v7", "lgdp_wb", "lpop", "lgdp_wb_sq", "HDD16dailybypop", "CDD18dailybypop")
+
+# Complete for 2000-2021 except a few 2021 observations
+# 1990-2021: Nigeria missing 1990-2000 for all shares
+# EXCLUDE NIGERIA in 1990-2021
+share_vars <- c("low_carbon_share_elec","renewables_share_elec", "fossil_share_elec", "solar_share_elec", "hydro_share_elec", "wind_share_elec", "nuclear_share_elec", "oil_share_elec", "coal_share_elec", "gas_share_elec")
+
+# Exclude Nigeria 1990-2000
+gen_vars <- c("log_electricity_generation", "log_elec_demand_twh", "log_imports_elec_twh", "log_exports_elec_twh")
+
+source_lev_vars <- c("low_carbon_electricity",                 
+         "renewables_electricity",                 
+         "fossil_electricity",
+         "coal_electricity",
+         "gas_electricity", 
+         "hydro_electricity", 
+         "nuclear_electricity",
+         "oil_electricity", 
+         "solar_electricity", 
+         "wind_electricity")
+
+for(s in source_lev_vars){
+  print(s)
+  df %>% filter(country %in% brics_plus & year >= 1990) %>% select(country, year, s) %>% ungroup %>% 
+    filter(!complete.cases(.)) %>% print
+}
+
+df %>% filter(country %in% brics_plus & year >= 1990) %>% 
+  ggplot(aes(x = year, y = solar_share_elec)) + 
+  geom_line() +
+  facet_wrap(~country)
+
+```
+
+```{r}
+temp <- read.csv(here('data/raw/IEA_elec_data/IEA_EI_CH_natl.csv')) %>% 
+  rename(elec_gwh = Value, year = Time) %>%
+  mutate(country = ifelse(Country %in% names(getcountry), unname(getcountry[Country]), ifelse(Country == "Republic of Turkiye", "Turkey", Country)),
+         elec_twh = elec_gwh/1000) %>%
+  select(country, Balance, year, elec_twh) %>%
+  pivot_wider(id_cols = c(country, year), names_from = Balance, values_from = elec_twh, names_glue = "{Balance}_{.value}") %>% 
+    clean_names %>% 
+  mutate(net_imports_twh = imports_elec_twh - exports_elec_twh,
+         elec_demand_twh = total_gross_production_elec_twh + net_imports_twh) %>% 
+  select(country, year, elec_demand_twh, exports_elec_twh, imports_elec_twh) %>% 
+  mutate(log_imports_elec_twh = log(imports_elec_twh + 1), log_exports_elec_twh = log(exports_elec_twh + 1),
+         log_elec_demand_twh = log(imports_elec_twh + 1))
+
+ggplot()+
+  geom_line(data = filter(temp, country %in% brics_plus & year >= 1990), aes(y = log_exports_elec_twh, x = year)) +
+  facet_wrap(~country, scales = "free")
+
+temp %>% filter(country %in% brics_plus & year >= 1990) %>% filter(!complete.cases(.))
+
+dem_df <- df %>% select(country, year, lgdp_wb, lpop, lgdp_wb_sq, log_electricity_generation, HDD16dailybypop, CDD18dailybypop) %>% 
+  left_join(., temp, by = c("country", "year")) %>% 
+    filter(country %in% brics_plus & year >= 1990) %>% 
+    ungroup
+    
+
+```
+
+
+# Formulas
+```{r}
+
+# Emissions
+emiss_base <-  "l_edgar_v7 ~ lgdp_wb + lpop + lgdp_wb_sq"
+emiss_weather <- "l_edgar_v7 ~ lgdp_wb + lpop + lgdp_wb_sq + HDD16dailybypop + CDD18dailybypop"
+
+# Shares
+controls <- c("~ lgdp_wb + lpop + lgdp_wb_sq",
+                 "~ lgdp_wb + lpop + lgdp_wb_sq + + HDD16dailybypop + CDD18dailybypop")
+
+share_forms <- c(paste("low_carbon_share_elec", controls),
+                 paste("renewables_share_elec", controls),
+                 paste("fossil_share_elec", controls),
+                 paste("solar_share_elec", controls),
+                  paste("hydro_share_elec", controls),
+                  paste("wind_share_elec", controls),
+                  paste("nuclear_share_elec", controls),
+                  paste("oil_share_elec", controls),
+                  paste("coal_share_elec", controls),
+                  paste("gas_share_elec", controls))
+
+# Demand Channel
+dem_forms <- c(paste("log_electricity_generation", controls))
+                 paste("log_elec_demand_twh", controls),
+                 paste("log_imports_elec_twh", controls),
+                 paste("log_exports_elec_twh", controls))
+
+
+```
+
+# Emissions
+```{r}
+
+cl <- makeCluster(6)
+registerDoParallel(cl)
+
+brics_ems <- foreach(f = c(emiss_base, emiss_weather), .combine = rbind, .packages = c('tidyverse', 'getspanel')) %:%
+    foreach(p.value = c(0.01, 0.001), .combine = rbind) %dopar% {
+      if(grepl("HDD", f)){
+        dat <- df %>% filter(country %in% brics_plus & year >= 2000)
+      }else{dat <- df %>% filter(country %in% brics_plus & year >= 1990)}
+      is <- isatpanel(
+            data = dat,
+            formula = as.formula(f),
+            index = c("country", "year"),
+            effect = "twoways",
+            iis = TRUE,
+            fesis = TRUE,
+            t.pval = p.value,
+            max.block.size = 20
+            )
+          models = tibble(source = f,
+                          country_sample = "BRICS_Plus",
+                          year_range = paste0(min(dat$year),":",max(dat$year)),
+                          p_val = p.value,
+                          is = list(is),
+                          iis = TRUE,
+                          b_size = 20,
+                          ar = 0)
+    }
+
+saveRDS(brics_ems, here("output/brics_emissions_models.RDS"))
+
+```
+
+# Demand Channel
+```{r}
+
+cl <- makeCluster(6)
+registerDoParallel(cl)
+
+brics_dem <- foreach(f = c(gen_vars), .combine = rbind, .packages = c('tidyverse', 'getspanel')) %:%
+    foreach(p.value = c(0.01, 0.001), .combine = rbind) %dopar% {
+      dat <- dem_df %>% 
+        filter(country %in% brics_plus & year >= 1990) %>% 
+        group_by(country) %>% 
+        mutate(thresh = sum(get(f) != 0, na.rm = TRUE)) %>% 
+        filter(thresh >= 8)
+      is <- isatpanel(
+            data = dat,
+            formula = as.formula(paste(f, "~ lgdp_wb + lpop + lgdp_wb_sq")),
+            index = c("country", "year"),
+            effect = "twoways",
+            iis = TRUE,
+            fesis = TRUE,
+            t.pval = p.value,
+            max.block.size = 20
+            )
+          models = tibble(source = paste(f, "~ lgdp_wb + lpop + lgdp_wb_sq"),
+                          country_sample = "BRICS_Plus",
+                          year_range = paste0(min(dat$year),":",max(dat$year)),
+                          p_val = p.value,
+                          is = list(is),
+                          iis = TRUE,
+                          b_size = 20,
+                          ar = 0)
+    }
+
+saveRDS(brics_dem, here("output/brics_dem_models.RDS"))
+
+
+```
+
+# Tech Channel: Shares
+```{r}
+
+cl <- makeCluster(6)
+registerDoParallel(cl)
+
+brics_shares <- foreach(f = c(share_vars[share_vars != "solar_share_elec"]), .combine = rbind, .packages = c('tidyverse', 'getspanel')) %:%
+    foreach(p.value = c(0.01, 0.001), .combine = rbind) %dopar% {
+      dat <- df %>% 
+        filter(country %in% brics_plus[brics_plus != "Nigeria"] & year >= 1990) %>% 
+        group_by(country) %>% 
+        mutate(thresh = sum(get(f) != 0, na.rm = TRUE)) %>% 
+        filter(thresh >= 30)
+      is <- isatpanel(
+            data = dat,
+            formula = as.formula(paste(f, "~ lgdp_wb + lpop + lgdp_wb_sq")),
+            index = c("country", "year"),
+            effect = "twoways",
+            iis = TRUE,
+            fesis = TRUE,
+            t.pval = p.value,
+            max.block.size = 20
+            )
+          models = tibble(source = paste(f, "~ lgdp_wb + lpop + lgdp_wb_sq"),
+                          country_sample = "BRICS_Plus",
+                          year_range = paste0(min(dat$year),":",max(dat$year)),
+                          p_val = p.value,
+                          is = list(is),
+                          iis = TRUE,
+                          b_size = 20,
+                          ar = 0)
+    }
+
+saveRDS(brics_shares, here("output/brics_source_shares_models.RDS"))
+
+# for(test in share_vars){
+#   print(test) 
+#   df %>% 
+#         filter(country %in% brics_plus[brics_plus != "Nigeria"] & year >= 1990) %>% 
+#         group_by(country) %>% 
+#         mutate(thresh = sum(get(test) != 0, na.rm = TRUE)) %>% 
+#         filter(thresh >= 30) %>% print}
+
+```
