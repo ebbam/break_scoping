@@ -406,7 +406,7 @@ for(count in c("Belgium", "Canada", "Denmark", "Portugal", "UnitedKingdom", "Uni
 ```
 
 
-```{r, echo = FALSE, results = 'asis', fig.height = 10}
+```{r, echo = FALSE, results = 'asis', fig.height = 12}
 
 for(cty in c("Belgium", "Canada", "Denmark", "Portugal", "UnitedKingdom", "UnitedStates")){
   cat('#### ', cty, '   \n')
