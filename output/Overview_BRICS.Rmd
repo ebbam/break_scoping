@@ -318,7 +318,7 @@ for(count in c("Egypt", "Russia", "SouthAfrica", "Thailand")){
 ```
 
 
-```{r, echo = FALSE, results = 'asis', fig.height = 16}
+```{r, echo = FALSE, results = 'asis', fig.height = 12}
 
 for(cty in c("Egypt", "Russia", "SouthAfrica", "Thailand")){
   cat('#### ', cty, '   \n')
@@ -386,7 +386,7 @@ for(count in c("Brazil", "Indonesia", "Iran", "Saudi Arabia", "Vietnam")){
 ```
 
 
-```{r, echo = FALSE, results = 'asis', fig.height = 16}
+```{r, echo = FALSE, results = 'asis', fig.height = 12}
 # Saudi Arabia removed bc no effect in channels - if modifications are made make sure to include again!
 for(cty in c("Brazil", "Indonesia", "Iran", "Vietnam")){
   cat('#### ', cty, '   \n')
