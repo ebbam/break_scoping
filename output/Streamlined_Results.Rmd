@@ -327,12 +327,11 @@ stand_disp %>%
 ```
 
 
-## Negative Emissions Breaks  {.tabset}
-*Note:* Countries in which no break was detected are excluded from these overview plots.\
+## Emissions {.tabset}
 
-### Emissions {.tabset}
+### Negative Breaks {.tabset}
 
-```{r, echo = FALSE, fig.height = 14}
+```{r, echo = FALSE, fig.height = 10}
 
 stand_forms <- stand_disp %>%
   filter(mod_name == "Standard Controls w. Temp" & ets_spec== "w. ETS" & ar == 0 & p_val < 0.05) %>% 
@@ -342,7 +341,6 @@ stand_forms %>% plot_comp(., sign = "neg")
 
 ```
 
-### Channels {.tabset}
 ```{r, echo = FALSE, include = FALSE}
 
 dem_disp <- prod %>%
@@ -408,7 +406,7 @@ for(count in c("Belgium", "Canada", "Denmark", "Portugal", "UnitedKingdom", "Uni
 ```
 
 
-```{r, echo = FALSE, results = 'asis', fig.height = 16}
+```{r, echo = FALSE, results = 'asis', fig.height = 10}
 
 for(cty in c("Belgium", "Canada", "Denmark", "Portugal", "UnitedKingdom", "UnitedStates")){
   cat('#### ', cty, '   \n')
@@ -423,11 +421,7 @@ for(cty in c("Belgium", "Canada", "Denmark", "Portugal", "UnitedKingdom", "Unite
 
 ```
 
-
-## Positive Emissions Breaks  {.tabset}
-*Note:* Countries in which no break was detected are excluded from these overview plots.\
-
-### Emissions {.tabset}
+### Positive Breaks  {.tabset}
 
 ```{r, echo = FALSE, fig.height = 12}
 
@@ -439,7 +433,6 @@ stand_forms %>% plot_comp(., sign = "pos")
 
 ```
 
-### Channels {.tabset}
 ```{r, echo = FALSE, include = FALSE}
 
 plots_p <- list()
@@ -474,7 +467,7 @@ for(count in c("Australia", "Austria", "France", "Germany", "Japan", "Netherland
 ```
 
 
-```{r, echo = FALSE, results = 'asis', fig.height = 16}
+```{r, echo = FALSE, results = 'asis', fig.height = 12}
 
 for(cty in c("Australia", "Austria", "France", "Germany", "Japan", "Netherlands", "NewZealand", "Portugal", "Spain", "Sweden", "Switzerland")){
   cat('#### ', cty, '   \n')
